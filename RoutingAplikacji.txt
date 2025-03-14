@@ -1,0 +1,63 @@
+1. Routingi Autentykacji (auth.routes.js)
+
+POST /api/v1/auth/register - Rejestracja nowego użytkownika
+POST /api/v1/auth/login - Logowanie użytkownika i generowanie tokenu JWT
+POST /api/v1/auth/logout - Wylogowanie użytkownika
+GET /api/v1/auth/profile - Pobieranie profilu zalogowanego użytkownika
+PUT /api/v1/auth/profile - Aktualizacja profilu użytkownika
+PUT /api/v1/auth/change-password - Zmiana hasła zalogowanego użytkownika
+POST /api/v1/auth/forgot-password - Inicjacja procesu resetowania hasła
+POST /api/v1/auth/reset-password/:token - Resetowanie hasła z użyciem tokenu
+GET /api/v1/auth/verify-reset-token/:token - Weryfikacja tokenu resetowania hasła
+GET /api/v1/auth/status - Sprawdzenie aktualnego statusu autentykacji
+
+2. Routingi Danych Rynkowych (market.routes.js)
+
+GET /api/v1/market/ticker/:symbol - Pobieranie aktualnej ceny dla pary handlowej
+GET /api/v1/market/klines/:symbol - Pobieranie historycznych danych świecowych
+GET /api/v1/market/klines/:symbol/:interval - Pobieranie danych świecowych z określonym interwałem
+GET /api/v1/market/symbols - Pobieranie listy dostępnych par handlowych
+GET /api/v1/market/stream/:symbol - Streaming aktualnych cen w czasie rzeczywistym (SSE)
+GET /api/v1/market/indicators/:symbol - Pobieranie bieżących wskaźników technicznych
+GET /api/v1/market/analysis/:symbol - Pobieranie analizy rynku z rekomendacjami
+GET /api/v1/market/volume/:symbol - Pobieranie danych o wolumenie obrotu
+GET /api/v1/market/stats/:symbol - Pobieranie statystyk rynkowych (zmiana ceny, zmienność)
+
+3. Routingi Sygnałów Handlowych (signal.routes.js)
+
+GET /api/v1/signals - Pobieranie wszystkich sygnałów z opcjonalnym filtrowaniem
+GET /api/v1/signals/instance/:instanceId - Pobieranie sygnałów dla konkretnej instancji
+GET /api/v1/signals/:signalId - Pobieranie konkretnego sygnału po ID
+GET /api/v1/signals/stats - Pobieranie statystyk sygnałów (skuteczność, zyski)
+GET /api/v1/signals/stats/instance/:instanceId - Statystyki dla konkretnej instancji
+GET /api/v1/signals/positions/active - Pobieranie aktywnych pozycji
+GET /api/v1/signals/positions/history - Historia zamkniętych pozycji
+GET /api/v1/signals/entry - Pobieranie sygnałów wejścia
+GET /api/v1/signals/exit - Pobieranie sygnałów wyjścia
+GET /api/v1/signals/latest - Pobieranie najnowszych sygnałów
+DELETE /api/v1/signals/instance/:instanceId - Czyszczenie historii sygnałów (tylko admin)
+GET /api/v1/signals/export - Eksport sygnałów do CSV
+GET /api/v1/signals/date-range - Pobieranie sygnałów z określonego zakresu dat
+
+4. Routingi Instancji Strategii (instance.routes.js)
+
+GET /api/v1/instances - Pobieranie wszystkich instancji strategii
+GET /api/v1/instances/active - Pobieranie tylko aktywnych instancji
+GET /api/v1/instances/:instanceId - Pobieranie konkretnej instancji po ID
+POST /api/v1/instances - Tworzenie nowej instancji
+PUT /api/v1/instances/:instanceId - Aktualizacja instancji
+DELETE /api/v1/instances/:instanceId - Usuwanie instancji
+POST /api/v1/instances/:instanceId/start - Uruchamianie instancji
+POST /api/v1/instances/:instanceId/stop - Zatrzymywanie instancji
+GET /api/v1/instances/:instanceId/state - Pobieranie bieżącego stanu instancji
+GET /api/v1/instances/:instanceId/results - Pobieranie wyników instancji
+GET /api/v1/instances/:instanceId/config - Pobieranie konfiguracji instancji
+PUT /api/v1/instances/:instanceId/config - Aktualizacja konfiguracji instancji
+POST /api/v1/instances/:instanceId/clone - Klonowanie instancji
+GET /api/v1/instances/compare/:instanceId1/:instanceId2 - Porównanie wyników dwóch instancji
+POST /api/v1/instances/stop-all - Zatrzymanie wszystkich instancji (tylko admin)
+
+5. Bazowe Routingi API (index.js)
+
+GET /api/v1 - Podstawowy endpoint do sprawdzenia działania API
+ALL /api/v1/* - Obsługa nieznanych tras API (404)

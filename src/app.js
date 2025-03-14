@@ -1,111 +1,81 @@
 /**
- * Główny plik aplikacji
- * Konfiguruje Express i middleware
+ * Main Application - główny plik aplikacji
+ *
+ * Odpowiedzialny za:
+ * - Konfigurację serwera Express
+ * - Inicjalizację middleware'ów
+ * - Rejestrację tras
+ * - Obsługę błędów
  */
 
 const express = require("express");
 const cors = require("cors");
-const helmet = require("helmet");
 const morgan = require("morgan");
+const helmet = require("helmet");
+const compression = require("compression");
+const routes = require("./routes");
+const dbService = require("./services/db.service");
 const logger = require("./utils/logger");
-const path = require("path");
+const { config } = require("./config/db.config");
 
 // Utwórz aplikację Express
 const app = express();
 
-// Załaduj zmienne środowiskowe
-require("dotenv").config();
+// Konfiguracja middleware'ów
+app.use(helmet()); // Bezpieczeństwo HTTP
+app.use(cors()); // Obsługa Cross-Origin Resource Sharing
+app.use(compression()); // Kompresja odpowiedzi
+app.use(express.json()); // Parsowanie JSON
+app.use(express.urlencoded({ extended: true })); // Parsowanie formularzy
+app.use(morgan("dev")); // Logowanie żądań HTTP
 
-// Podstawowe middleware bezpieczeństwa
-app.use(helmet());
+// Połącz z bazą danych
+(async () => {
+  try {
+    await dbService.connect(config.uri);
+    logger.info("Połączono z bazą danych MongoDB");
+  } catch (error) {
+    logger.error(`Błąd podczas łączenia z bazą danych: ${error.message}`);
+  }
+})();
 
-// Konfiguracja CORS
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN || "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+// Zarejestruj wszystkie trasy
+app.use(routes);
 
-// Logowanie requestów
-app.use(
-  morgan("combined", {
-    stream: { write: (message) => logger.info(message.trim()) },
-  })
-);
-
-// Parsowanie JSON body
-app.use(express.json({ limit: "10mb" }));
-
-// Parsowanie danych w URL
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-
-// Serwowanie statycznych plików (jeśli potrzebne)
-// app.use(express.static(path.join(__dirname, 'public')));
-
-// Ustawienie zmiennych aplikacji
-app.set("env", process.env.NODE_ENV || "development");
-
-// Import tras API
-// Na początku zakomentowane, odkomentuj gdy zaimplementujesz moduł routes
-// const routes = require('./routes');
-// app.use('/api', routes);
-
-// Trasa sprawdzająca stan serwera
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    environment: app.get("env"),
-    uptime: process.uptime(),
+// Obsługa błędu 404 (nie znaleziono)
+app.use((req, res, next) => {
+  res.status(404).json({
+    error: "Not Found",
+    message: "The requested resource does not exist",
   });
 });
 
-// Podstawowa trasa
-app.get("/", (req, res) => {
-  res.status(200).json({
-    message: "Binance Trading Bot API",
-    version: "1.0.0",
-    documentation: "/api/docs", // W przyszłości można dodać dokumentację API
-  });
-});
-
-// Middleware obsługi błędów
+// Obsługa błędów
 app.use((err, req, res, next) => {
-  logger.error(`Błąd: ${err.message}`, { stack: err.stack });
+  logger.error(`Błąd aplikacji: ${err.message}`);
 
   // Obsługa błędów walidacji
   if (err.name === "ValidationError") {
     return res.status(400).json({
-      error: "Błąd walidacji",
-      details: err.details || err.message,
+      error: "Validation Error",
+      message: err.message,
+      details: err.errors,
     });
   }
 
-  // Obsługa błędów JWT
-  if (err.name === "UnauthorizedError") {
-    return res.status(401).json({
-      error: "Nieautoryzowany",
-      details: "Nieprawidłowy token lub token wygasł",
+  // Obsługa błędów MongoDB
+  if (err.name === "MongoError" || err.name === "MongoServerError") {
+    return res.status(500).json({
+      error: "Database Error",
+      message: "An error occurred when interacting with the database",
     });
   }
 
-  // Domyślna odpowiedź błędu
+  // Obsługa pozostałych błędów
   const statusCode = err.statusCode || 500;
-  const message = err.statusCode ? err.message : "Wewnętrzny błąd serwera";
-
   res.status(statusCode).json({
-    error: message,
-    details: app.get("env") === "development" ? err.stack : null,
-  });
-});
-
-// Handler dla tras, które nie istnieją (404)
-app.use((req, res) => {
-  res.status(404).json({
-    error: "Nie znaleziono",
-    details: `Trasa ${req.method} ${req.url} nie istnieje`,
+    error: err.name || "Internal Server Error",
+    message: err.message || "Something went wrong on the server",
   });
 });
 

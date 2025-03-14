@@ -1,65 +1,90 @@
 /**
- * Konfiguracja połączenia z bazą danych MongoDB
+ * Database Configuration - konfiguracja połączenia z bazą danych MongoDB
+ *
+ * Odpowiedzialny za:
+ * - Przechowywanie parametrów połączenia z MongoDB
+ * - Dostarczanie URI połączenia
+ * - Konfigurację opcji połączenia
  */
 
-const mongoose = require("mongoose");
-const logger = require("../utils/logger");
+// Importuj zmienne środowiskowe (jeśli używamy dotenv)
+// require('dotenv').config();
 
-/**
- * Nawiązuje połączenie z bazą danych MongoDB
- * @returns {Promise} Obietnica połączenia z bazą danych
- */
-const connectDB = async () => {
-  try {
-    const mongoURI =
-      process.env.MONGO_URI || "mongodb://localhost:27017/binance-bot";
+const config = {
+  // URI połączenia z bazą danych
+  // Format: mongodb://[username:password@]host:port/database
+  uri:
+    process.env.MONGODB_URI || "mongodb://localhost:27017/binance-trading-bot",
 
-    logger.info(`Łączenie z bazą danych: ${mongoURI.split("@").pop()}`); // Log URI bez danych uwierzytelniających
+  // Nazwa bazy danych
+  database: process.env.MONGODB_DB || "binance-trading-bot",
 
-    const connection = await mongoose.connect(mongoURI);
+  // Opcje połączenia
+  options: {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    // Opcje autoryzacji (jeśli wymagane)
+    ...(process.env.MONGODB_USER && process.env.MONGODB_PASSWORD
+      ? {
+          auth: {
+            username: process.env.MONGODB_USER,
+            password: process.env.MONGODB_PASSWORD,
+          },
+        }
+      : {}),
+  },
 
-    logger.info(
-      `Połączono z bazą danych MongoDB: ${connection.connection.host}`
-    );
-    return connection;
-  } catch (error) {
-    logger.error(`Błąd połączenia z MongoDB: ${error.message}`);
-    throw error;
-  }
+  // Konfiguracja połączeń w trybie produkcyjnym
+  production: {
+    // Dodatkowe ustawienia dla produkcji
+    poolSize: 10,
+    ssl: true,
+    sslValidate: true,
+    retryWrites: true,
+    w: "majority",
+  },
+
+  // Konfiguracja połączenia w trybie rozwojowym
+  development: {
+    // Dodatkowe ustawienia dla developmentu
+    poolSize: 5,
+    retryWrites: true,
+  },
+
+  // Konfiguracja połączenia w trybie testowym
+  test: {
+    // Dodatkowe ustawienia dla testów
+    poolSize: 5,
+    autoReconnect: false,
+  },
 };
 
 /**
- * Zamyka połączenie z bazą danych MongoDB
- * @returns {Promise} Obietnica zamknięcia połączenia
+ * Zwraca opcje połączenia na podstawie środowiska
+ * @returns {Object} - Opcje połączenia
  */
-const closeDB = async () => {
-  try {
-    await mongoose.connection.close();
-    logger.info("Połączenie MongoDB zamknięte");
-    return true;
-  } catch (error) {
-    logger.error(
-      `Błąd podczas zamykania połączenia z MongoDB: ${error.message}`
-    );
-    throw error;
-  }
-};
+const getConnectionOptions = () => {
+  const env = process.env.NODE_ENV || "development";
 
-/**
- * Sprawdza stan połączenia z bazą danych
- * @returns {Object} Informacje o stanie połączenia
- */
-const getDBStatus = () => {
+  // Połącz podstawowe opcje z opcjami dla konkretnego środowiska
   return {
-    connected: mongoose.connection.readyState === 1,
-    state: mongoose.connection.readyState,
-    host: mongoose.connection.host,
-    name: mongoose.connection.name,
+    ...config.options,
+    ...(config[env] || {}),
   };
 };
 
+/**
+ * Zwraca URI połączenia z bazą danych
+ * @returns {string} - URI połączenia
+ */
+const getConnectionUri = () => {
+  return config.uri;
+};
+
 module.exports = {
-  connectDB,
-  closeDB,
-  getDBStatus,
+  config,
+  getConnectionOptions,
+  getConnectionUri,
 };

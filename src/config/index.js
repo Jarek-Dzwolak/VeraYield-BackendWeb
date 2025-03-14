@@ -1,14 +1,15 @@
 /**
- * Eksportuje wszystkie konfiguracje
+ * Config Index - indeks konfiguracji
+ *
+ * Eksportuje wszystkie konfiguracje do łatwego importu w innych częściach aplikacji
  */
 
 const dbConfig = require("./db.config");
-
-// Inne konfiguracje zostaną dodane w przyszłości
-// const binanceConfig = require('./binance.config');
-// const instanceConfig = require('./instance.config');
+const binanceConfig = require("./binance.config");
+const instanceConfig = require("./instance.config");
 
 module.exports = {
-  dbConfig,
-  // Inne konfiguracje będą dodawane tutaj
+  db: dbConfig,
+  binance: binanceConfig,
+  instance: instanceConfig,
 };
