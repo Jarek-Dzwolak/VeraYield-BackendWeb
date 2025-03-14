@@ -1,0 +1,63 @@
+binance-trading-bot/
+│
+├── src/                        # Główny katalog z kodem źródłowym
+│   ├── config/                 # Konfiguracja aplikacji
+│   │   ├── db.config.js        # Konfiguracja połączenia z MongoDB
+│   │   ├── binance.config.js   # Konfiguracja API Binance
+│   │   ├── instance.config.js  # Konfiguracja instancji strategii
+│   │   └── index.js            # Eksportuje wszystkie konfiguracje
+│   │
+│   ├── controllers/            # Kontrolery API
+│   │   ├── auth.controller.js  # Kontroler autentykacji
+│   │   ├── market.controller.js # Kontroler danych rynkowych
+│   │   ├── signal.controller.js # Kontroler sygnałów handlowych
+│   │   └── index.js            # Eksportuje wszystkie kontrolery
+│   │
+│   ├── services/               # Warstwa usług
+│   │   ├── binance.service.js  # Obsługa WebSocket i API Binance
+│   │   ├── analysis.service.js # Serwis analizy danych (kanał Hursta, EMA)
+│   │   ├── signal.service.js   # Generowanie sygnałów handlowych
+│   │   ├── db.service.js       # Operacje na bazie danych
+│   │   ├── instance.service.js # Zarządzanie instancjami strategii
+│   │   └── index.js            # Eksportuje wszystkie serwisy
+│   │
+│   ├── models/                 # Modele danych MongoDB
+│   │   ├── user.model.js       # Model użytkownika
+│   │   ├── signal.model.js     # Model sygnału handlowego
+│   │   ├── market-data.model.js # Model danych rynkowych
+│   │   ├── instance.model.js   # Model instancji strategii
+│   │   └── index.js            # Eksportuje wszystkie modele
+│   │
+│   ├── utils/                  # Narzędzia pomocnicze
+│   │   ├── technical.js        # Funkcje do analizy technicznej (Hurst, EMA)
+│   │   ├── validators.js       # Funkcje walidacji danych
+│   │   ├── websocket.js        # Pomocnik do zarządzania WebSocket
+│   │   └── logger.js           # System logowania
+│   │
+│   ├── routes/                 # Trasy API
+│   │   ├── auth.routes.js      # Ścieżki autentykacji
+│   │   ├── market.routes.js    # Ścieżki danych rynkowych
+│   │   ├── signal.routes.js    # Ścieżki sygnałów handlowych
+│   │   ├── instance.routes.js  # Ścieżki zarządzania instancjami
+│   │   └── index.js            # Eksportuje wszystkie trasy
+│   │
+│   ├── middleware/             # Middleware
+│   │   ├── auth.middleware.js  # Middleware autentykacji
+│   │   ├── validator.middleware.js # Middleware walidacji danych
+│   │   └── index.js            # Eksportuje wszystkie middleware
+│   │
+│   ├── app.js                  # Definicja aplikacji Express
+│   └── server.js               # Uruchomienie serwera HTTP
+│
+├── tests/                      # Testy
+│   ├── unit/                   # Testy jednostkowe
+│   └── integration/            # Testy integracyjne
+│
+├── docs/                       # Dokumentacja
+│
+├── .env                        # Zmienne środowiskowe
+├── .env.example                # Przykładowe zmienne środowiskowe
+├── .gitignore                  # Ignorowane pliki Git
+├── package.json                # Definicja projektu i zależności
+├── package-lock.json           # Lock file
+└── README.md                   # Dokumentacja projektu
