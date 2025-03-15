@@ -71,18 +71,25 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`Próba logowania dla email: ${email}`);
 
     // Znajdź użytkownika
     const user = await User.findByEmail(email);
+    console.log(`Użytkownik znaleziony: ${!!user}`);
+
     if (!user) {
+      console.log("Nie znaleziono użytkownika z email:", email);
       return res.status(401).json({
         error: "Authentication Failed",
         message: "Invalid email or password",
       });
     }
 
+    console.log("Status konta:", user.status);
+
     // Sprawdź, czy konto jest aktywne
     if (user.status !== "active") {
+      console.log("Konto nieaktywne, status:", user.status);
       return res.status(403).json({
         error: "Authentication Failed",
         message: "Account is inactive or suspended",
@@ -90,8 +97,12 @@ const login = async (req, res) => {
     }
 
     // Sprawdź hasło
+    console.log("Sprawdzanie hasła...");
     const isPasswordValid = await user.comparePassword(password);
+    console.log(`Hasło poprawne: ${isPasswordValid}`);
+
     if (!isPasswordValid) {
+      console.log("Nieprawidłowe hasło");
       return res.status(401).json({
         error: "Authentication Failed",
         message: "Invalid email or password",
@@ -108,6 +119,7 @@ const login = async (req, res) => {
       JWT_SECRET,
       { expiresIn: JWT_EXPIRATION }
     );
+    console.log("Token wygenerowany pomyślnie");
 
     // Zwróć token i dane użytkownika
     res.json({
@@ -116,6 +128,7 @@ const login = async (req, res) => {
       user: user.getProfile(),
     });
   } catch (error) {
+    console.error("Szczegóły błędu:", error);
     logger.error(`Błąd podczas logowania: ${error.message}`);
     res.status(500).json({
       error: "Authentication Failed",

@@ -158,14 +158,18 @@ UserSchema.pre("save", async function (next) {
   }
 
   try {
+    console.log("Generowanie nowego hashu dla hasła...");
     // Generuj salt
     const salt = await bcrypt.genSalt(10);
+    console.log("Salt wygenerowany");
     // Hashuj hasło
     const hash = await bcrypt.hash(user.password, salt);
+    console.log("Hasło zostało zahashowane");
     // Zastąp hasło hashem
     user.password = hash;
     next();
   } catch (error) {
+    console.error("Błąd podczas hashowania hasła:", error);
     next(error);
   }
 });
@@ -178,8 +182,21 @@ UserSchema.pre("save", async function (next) {
  */
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   try {
-    return await bcrypt.compare(candidatePassword, this.password);
+    console.log("Porównywanie hasła...");
+    console.log(
+      "Kandydat na hasło (fragment):",
+      candidatePassword ? "***" : "null"
+    );
+    console.log(
+      "Hash hasła w bazie (fragment):",
+      this.password ? this.password.substring(0, 15) + "..." : "null"
+    );
+
+    const result = await bcrypt.compare(candidatePassword, this.password);
+    console.log("Wynik porównania:", result);
+    return result;
   } catch (error) {
+    console.error("Błąd podczas porównywania haseł:", error);
     throw error;
   }
 };
@@ -218,7 +235,10 @@ UserSchema.methods.getProfile = function () {
  * @returns {Promise<Object>} - Znaleziony użytkownik lub null
  */
 UserSchema.statics.findByEmail = async function (email) {
-  return this.findOne({ email: email.toLowerCase() });
+  console.log("Szukam użytkownika z emailem:", email);
+  const result = await this.findOne({ email: email.toLowerCase() });
+  console.log("Znaleziono użytkownika:", result ? "Tak" : "Nie");
+  return result;
 };
 
 // Eksportuj model
