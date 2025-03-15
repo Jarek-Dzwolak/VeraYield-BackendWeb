@@ -7,41 +7,30 @@
  * - Konfigurację opcji połączenia
  */
 
-// Importuj zmienne środowiskowe (jeśli używamy dotenv)
-// require('dotenv').config();
+// Importuj zmienne środowiskowe
+require("dotenv").config();
 
 const config = {
   // URI połączenia z bazą danych
-  // Format: mongodb://[username:password@]host:port/database
-  uri:
-    process.env.MONGODB_URI || "mongodb://localhost:27017/binance-trading-bot",
+  uri: process.env.MONGO_URI,
 
   // Nazwa bazy danych
-  database: process.env.MONGODB_DB || "binance-trading-bot",
+  database: "cryptobot",
 
-  // Opcje połączenia
+  // Opcje połączenia - zaktualizowane dla nowszych wersji MongoDB
   options: {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-    // Opcje autoryzacji (jeśli wymagane)
-    ...(process.env.MONGODB_USER && process.env.MONGODB_PASSWORD
-      ? {
-          auth: {
-            username: process.env.MONGODB_USER,
-            password: process.env.MONGODB_PASSWORD,
-          },
-        }
-      : {}),
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 60000,
+    connectTimeoutMS: 30000,
+    // Opcje autoryzacji są już zawarte w URI z MongoDB Atlas
   },
 
   // Konfiguracja połączeń w trybie produkcyjnym
   production: {
     // Dodatkowe ustawienia dla produkcji
-    poolSize: 10,
+    maxPoolSize: 10,
     ssl: true,
-    sslValidate: true,
+    tls: true,
     retryWrites: true,
     w: "majority",
   },
@@ -49,15 +38,15 @@ const config = {
   // Konfiguracja połączenia w trybie rozwojowym
   development: {
     // Dodatkowe ustawienia dla developmentu
-    poolSize: 5,
+    maxPoolSize: 5,
     retryWrites: true,
   },
 
   // Konfiguracja połączenia w trybie testowym
   test: {
     // Dodatkowe ustawienia dla testów
-    poolSize: 5,
-    autoReconnect: false,
+    maxPoolSize: 5,
+    autoReconnect: true,
   },
 };
 
@@ -83,8 +72,48 @@ const getConnectionUri = () => {
   return config.uri;
 };
 
+/**
+ * Sprawdza stan połączenia z bazą danych
+ * @param {Object} mongoose - Instancja mongoose
+ * @returns {Promise<boolean>} - Status połączenia
+ */
+const checkConnection = async (mongoose) => {
+  try {
+    // Sprawdzenie stanu połączenia
+    const state = mongoose.connection.readyState;
+    const logger = require("../utils/logger");
+
+    switch (state) {
+      case 0:
+        logger.info("MongoDB: Rozłączono");
+        break;
+      case 1:
+        logger.info("MongoDB: Połączono");
+        break;
+      case 2:
+        logger.info("MongoDB: Łączenie w toku");
+        break;
+      case 3:
+        logger.info("MongoDB: Rozłączanie w toku");
+        break;
+      default:
+        logger.info(`MongoDB: Nieznany stan (${state})`);
+    }
+
+    return state === 1;
+  } catch (error) {
+    const logger = require("../utils/logger");
+    logger.error(
+      "MongoDB: Błąd podczas sprawdzania połączenia:",
+      error.message
+    );
+    return false;
+  }
+};
+
 module.exports = {
   config,
   getConnectionOptions,
   getConnectionUri,
+  checkConnection,
 };

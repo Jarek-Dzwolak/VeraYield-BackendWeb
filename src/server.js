@@ -19,38 +19,89 @@ const PORT = process.env.PORT || 3000;
 // Utwórz serwer HTTP
 const server = http.createServer(app);
 
-// Inicjalizuj serwis instancji
-(async () => {
+/**
+ * Funkcja inicjalizująca aplikację
+ */
+const initializeApp = async () => {
   try {
+    // Najpierw połącz z bazą danych
+    logger.info("Nawiązywanie połączenia z bazą danych...");
+    const dbConnected = await dbService.connect();
+
+    if (!dbConnected) {
+      logger.error(
+        "Nie udało się połączyć z bazą danych. Kończenie procesu uruchamiania."
+      );
+      process.exit(1);
+    }
+
+    logger.info("Połączono z bazą danych MongoDB");
+
+    // Następnie zainicjalizuj serwis instancji
+    logger.info("Inicjalizacja serwisu instancji...");
     await instanceService.initialize();
     logger.info("Zainicjalizowano serwis instancji");
-  } catch (error) {
-    logger.error(
-      `Błąd podczas inicjalizacji serwisu instancji: ${error.message}`
-    );
-  }
-})();
 
-// Uruchom serwer
-server.listen(PORT, () => {
-  logger.info(`Serwer HTTP uruchomiony na porcie ${PORT}`);
+    // Uruchom serwer HTTP
+    server.listen(PORT, () => {
+      logger.info(`Serwer HTTP uruchomiony na porcie ${PORT}`);
+    });
+
+    // Dodaj obsługę błędów serwera HTTP
+    server.on("error", (error) => {
+      if (error.code === "EADDRINUSE") {
+        logger.error(`Port ${PORT} jest już używany. Wybierz inny port.`);
+        process.exit(1);
+      } else {
+        logger.error(`Błąd serwera HTTP: ${error.message}`);
+      }
+    });
+
+    return true;
+  } catch (error) {
+    logger.error(`Błąd podczas inicjalizacji aplikacji: ${error.message}`);
+    process.exit(1);
+  }
+};
+
+// Uruchom aplikację
+initializeApp().catch((error) => {
+  logger.error(
+    `Krytyczny błąd podczas uruchamiania aplikacji: ${error.message}`
+  );
+  process.exit(1);
 });
 
 // Obsługa zamknięcia serwera (graceful shutdown)
-const shutdown = async () => {
-  logger.info("Otrzymano sygnał zamknięcia, zamykanie serwera...");
+const shutdown = async (signal) => {
+  logger.info(
+    `Otrzymano sygnał ${signal || "zamknięcia"}, zamykanie serwera...`
+  );
 
   // Zatrzymaj wszystkie instancje
-  await instanceService.stopAllInstances();
-  logger.info("Zatrzymano wszystkie instancje strategii");
+  try {
+    logger.info("Zatrzymywanie instancji strategii...");
+    await instanceService.stopAllInstances();
+    logger.info("Zatrzymano wszystkie instancje strategii");
+  } catch (error) {
+    logger.error(`Błąd podczas zatrzymywania instancji: ${error.message}`);
+  }
 
   // Zamknij połączenie z bazą danych
-  await dbService.disconnect();
-  logger.info("Zamknięto połączenie z bazą danych");
+  try {
+    logger.info("Zamykanie połączenia z bazą danych...");
+    await dbService.disconnect();
+    logger.info("Zamknięto połączenie z bazą danych");
+  } catch (error) {
+    logger.error(
+      `Błąd podczas zamykania połączenia z bazą danych: ${error.message}`
+    );
+  }
 
   // Zamknij serwer HTTP
   server.close(() => {
     logger.info("Serwer HTTP zamknięty");
+    // Wyjdź z kodem 0 (sukces)
     process.exit(0);
   });
 
@@ -64,8 +115,8 @@ const shutdown = async () => {
 };
 
 // Nasłuchuj sygnałów zamknięcia
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 // Obsługa nieobsłużonych wyjątków
 process.on("uncaughtException", (error) => {
@@ -73,14 +124,19 @@ process.on("uncaughtException", (error) => {
   logger.error(error.stack);
 
   // W przypadku krytycznego błędu, zamknij aplikację
-  shutdown();
+  shutdown("uncaughtException");
 });
 
 // Obsługa nieobsłużonych odrzuceń Promise
 process.on("unhandledRejection", (reason, promise) => {
   logger.error("Nieobsłużone odrzucenie Promise:");
   logger.error(`Promise: ${promise}`);
-  logger.error(`Powód: ${reason}`);
+  logger.error(`Powód: ${reason instanceof Error ? reason.stack : reason}`);
 
-  // Dla nieobsłużonych odrzuceń, logujemy, ale nie zamykamy serwera
+  // Dla nieobsłużonych odrzuceń logujemy, ale nie zamykamy serwera
+  // Jeśli chcemy, aby aplikacja zamykała się również w takich przypadkach, odkomentuj:
+  // shutdown("unhandledRejection");
 });
+
+// Eksportuj serwer (przydatne dla testów)
+module.exports = server;

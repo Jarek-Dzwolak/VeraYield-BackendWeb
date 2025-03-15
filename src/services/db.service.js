@@ -9,41 +9,66 @@
 
 const mongoose = require("mongoose");
 const logger = require("../utils/logger");
+const {
+  getConnectionUri,
+  getConnectionOptions,
+} = require("../config/db.config");
 
 class DatabaseService {
   constructor() {
     this.isConnected = false;
-    this.connectionOptions = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    };
+    this.connectionAttempts = 0;
+    this.maxConnectionAttempts = 5;
   }
 
   /**
    * Nawiązuje połączenie z bazą danych MongoDB
-   * @param {string} uri - URI połączenia MongoDB
+   * @param {string} [uri=null] - Opcjonalne URI połączenia MongoDB, jeśli nie podane, użyje z konfiguracji
    * @returns {Promise<boolean>} - Czy połączenie zostało nawiązane
    */
-  async connect(uri) {
+  async connect(uri = null) {
     try {
-      if (this.isConnected) {
+      if (this.isConnected && mongoose.connection.readyState === 1) {
         logger.info("Połączenie z bazą danych już istnieje");
         return true;
       }
 
-      logger.info("Nawiązywanie połączenia z MongoDB...");
+      // Jeśli podano URI, użyj go, w przeciwnym razie pobierz z konfiguracji
+      const connectionUri = uri || getConnectionUri();
+      const connectionOptions = getConnectionOptions();
+
+      this.connectionAttempts++;
+      logger.info(
+        `Nawiązywanie połączenia z MongoDB... (próba ${this.connectionAttempts}/${this.maxConnectionAttempts})`
+      );
+
+      // Zamknij istniejące połączenie, jeśli istnieje
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.connection.close();
+        logger.info("Zamknięto poprzednie połączenie z MongoDB");
+      }
 
       // Dodaj listenery zdarzeń
       mongoose.connection.on("connected", () => {
         this.isConnected = true;
+        this.connectionAttempts = 0;
         logger.info("Połączono z bazą danych MongoDB");
       });
 
       mongoose.connection.on("error", (err) => {
         this.isConnected = false;
         logger.error(`Błąd połączenia z MongoDB: ${err.message}`);
+
+        // Automatyczne ponowne połączenie, jeśli nie przekroczono limitu prób
+        if (this.connectionAttempts < this.maxConnectionAttempts) {
+          logger.info("Próba ponownego połączenia za 5 sekund...");
+          setTimeout(() => this.connect(connectionUri), 5000);
+        } else {
+          logger.error(
+            `Przekroczono maksymalną liczbę prób połączenia (${this.maxConnectionAttempts})`
+          );
+          this.connectionAttempts = 0;
+        }
       });
 
       mongoose.connection.on("disconnected", () => {
@@ -52,16 +77,58 @@ class DatabaseService {
       });
 
       // Nawiąż połączenie
-      await mongoose.connect(uri, this.connectionOptions);
+      await mongoose.connect(connectionUri, connectionOptions);
 
-      // Konfiguracja indeksów (opcjonalnie)
-      this._setupIndexes();
+      // Sprawdź stan połączenia
+      this.isConnected = mongoose.connection.readyState === 1;
 
-      return true;
+      if (this.isConnected) {
+        // Resetuj licznik prób po udanym połączeniu
+        this.connectionAttempts = 0;
+
+        // Konfiguracja indeksów (opcjonalnie)
+        await this._setupIndexes();
+      }
+
+      return this.isConnected;
     } catch (error) {
       this.isConnected = false;
       logger.error(`Błąd podczas łączenia z bazą danych: ${error.message}`);
-      return false;
+
+      // Jeśli błąd zawiera informacje o połączeniu Atlas
+      if (error.message.includes("atlas") || error.message.includes("srv")) {
+        logger.info(
+          "Wskazówka: Sprawdź, czy używasz prawidłowego connection string dla MongoDB Atlas"
+        );
+        logger.info(
+          "Format: mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>"
+        );
+      }
+      // Jeśli jest to problem z lokalnym połączeniem
+      else if (error.message.includes("ECONNREFUSED")) {
+        logger.info(
+          "Wskazówka: Lokalny serwer MongoDB nie jest uruchomiony lub jest niedostępny."
+        );
+        logger.info(
+          "Uruchom MongoDB lokalnie lub skonfiguruj połączenie z MongoDB Atlas."
+        );
+      }
+
+      // Automatyczne ponowne połączenie, jeśli nie przekroczono limitu prób
+      if (this.connectionAttempts < this.maxConnectionAttempts) {
+        const retryDelay = Math.min(1000 * this.connectionAttempts, 10000); // Maksymalnie 10 sekund
+        logger.info(
+          `Próba ponownego połączenia za ${retryDelay / 1000} sekund...`
+        );
+        setTimeout(() => this.connect(uri), retryDelay);
+        return false;
+      } else {
+        logger.error(
+          `Przekroczono maksymalną liczbę prób połączenia (${this.maxConnectionAttempts})`
+        );
+        this.connectionAttempts = 0;
+        return false;
+      }
     }
   }
 
@@ -71,7 +138,7 @@ class DatabaseService {
    */
   async disconnect() {
     try {
-      if (!this.isConnected) {
+      if (!this.isConnected || mongoose.connection.readyState === 0) {
         logger.info("Brak aktywnego połączenia z bazą danych");
         return true;
       }
@@ -91,39 +158,89 @@ class DatabaseService {
    * @returns {boolean} - Czy połączenie jest aktywne
    */
   isConnectedToDatabase() {
-    return this.isConnected && mongoose.connection.readyState === 1;
+    const connectionState = mongoose.connection.readyState;
+    this.isConnected = connectionState === 1;
+    return this.isConnected;
   }
 
   /**
    * Konfiguruje indeksy w bazie danych
    * @private
    */
-  _setupIndexes() {
+  async _setupIndexes() {
     try {
-      // Indeksy są zazwyczaj konfigurowane w modelach,
-      // ale tutaj można dodać dodatkowe indeksy
+      // Implementacja konfiguracji indeksów dla modeli
+      // (tutaj można dodać kod do automatycznego tworzenia indeksów)
+
+      // Przykładowa weryfikacja indeksów dla kolekcji sygnałów
+      const signalIndexes = [
+        { instanceId: 1, createdAt: -1 },
+        { instanceId: 1, type: 1 },
+        { instanceId: 1, symbol: 1 },
+      ];
+
+      // Tworzymy indeksy na kolekcji sygnałów, jeśli istnieje
+      if (mongoose.connection.db.collection("signals")) {
+        for (const index of signalIndexes) {
+          await mongoose.connection.db.collection("signals").createIndex(index);
+        }
+      }
+
       logger.debug("Skonfigurowano indeksy bazy danych");
+      return true;
     } catch (error) {
       logger.error(`Błąd podczas konfiguracji indeksów: ${error.message}`);
+      return false;
     }
   }
 
   /**
    * Wykonuje zapytanie do bazy danych
    * @param {Function} queryFn - Funkcja wykonująca zapytanie
+   * @param {number} [retryCount=3] - Liczba prób wykonania zapytania
    * @returns {Promise<any>} - Wynik zapytania
    */
-  async executeQuery(queryFn) {
-    try {
-      if (!this.isConnectedToDatabase()) {
-        throw new Error("Brak połączenia z bazą danych");
-      }
+  async executeQuery(queryFn, retryCount = 3) {
+    let attempts = 0;
 
-      return await queryFn();
-    } catch (error) {
-      logger.error(`Błąd podczas wykonywania zapytania: ${error.message}`);
-      throw error;
-    }
+    const execute = async () => {
+      try {
+        attempts++;
+
+        if (!this.isConnectedToDatabase()) {
+          // Jeśli nie jesteśmy połączeni, spróbuj ponownie się połączyć
+          logger.warn(
+            "Brak połączenia z bazą danych, próba ponownego połączenia..."
+          );
+          const connected = await this.connect();
+
+          if (!connected) {
+            throw new Error("Nie można połączyć się z bazą danych");
+          }
+        }
+
+        return await queryFn();
+      } catch (error) {
+        logger.error(
+          `Błąd podczas wykonywania zapytania (próba ${attempts}/${retryCount}): ${error.message}`
+        );
+
+        // Jeśli to błąd połączenia i mamy jeszcze próby, spróbuj ponownie
+        if (
+          attempts < retryCount &&
+          (error.name === "MongoNetworkError" ||
+            error.message.includes("ECONNREFUSED"))
+        ) {
+          logger.info(`Ponowna próba wykonania zapytania za 1 sekundę...`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          return await execute();
+        }
+
+        throw error;
+      }
+    };
+
+    return await execute();
   }
 
   /**
@@ -133,7 +250,12 @@ class DatabaseService {
   async startTransaction() {
     try {
       if (!this.isConnectedToDatabase()) {
-        throw new Error("Brak połączenia z bazą danych");
+        // Spróbuj ponownie się połączyć
+        const connected = await this.connect();
+
+        if (!connected) {
+          throw new Error("Brak połączenia z bazą danych");
+        }
       }
 
       const session = await mongoose.startSession();
@@ -184,7 +306,11 @@ class DatabaseService {
   async backupCollection(collectionName) {
     try {
       if (!this.isConnectedToDatabase()) {
-        throw new Error("Brak połączenia z bazą danych");
+        const connected = await this.connect();
+
+        if (!connected) {
+          throw new Error("Brak połączenia z bazą danych");
+        }
       }
 
       const collection = mongoose.connection.collection(collectionName);
@@ -206,7 +332,11 @@ class DatabaseService {
   async restoreCollection(collectionName, data) {
     try {
       if (!this.isConnectedToDatabase()) {
-        throw new Error("Brak połączenia z bazą danych");
+        const connected = await this.connect();
+
+        if (!connected) {
+          throw new Error("Brak połączenia z bazą danych");
+        }
       }
 
       const collection = mongoose.connection.collection(collectionName);
@@ -238,7 +368,11 @@ class DatabaseService {
   async getDatabaseStats() {
     try {
       if (!this.isConnectedToDatabase()) {
-        throw new Error("Brak połączenia z bazą danych");
+        const connected = await this.connect();
+
+        if (!connected) {
+          throw new Error("Brak połączenia z bazą danych");
+        }
       }
 
       const db = mongoose.connection.db;
