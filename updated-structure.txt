@@ -8,6 +8,7 @@ binance-trading-bot/
 │   │   └── index.js            # Eksportuje wszystkie konfiguracje
 │   │
 │   ├── controllers/            # Kontrolery API
+|   |   |-- instance.controller.js # Kontroler instancji strategii
 │   │   ├── auth.controller.js  # Kontroler autentykacji
 │   │   ├── market.controller.js # Kontroler danych rynkowych
 │   │   ├── signal.controller.js # Kontroler sygnałów handlowych
