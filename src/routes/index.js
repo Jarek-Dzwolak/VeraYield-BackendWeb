@@ -26,10 +26,28 @@ router.use(`${API_BASE}/instances`, instanceRoutes);
 
 // Podstawowa trasa dla sprawdzenia działania API
 router.get(`${API_BASE}`, (req, res) => {
+  // Pobierz host i protokół z nagłówków
+  const host = req.get("host") || "localhost:3000";
+  const wsProtocol = req.protocol === "https" ? "wss" : "ws";
+
   res.json({
     message: "Binance Trading Bot API",
     version: "1.0.0",
     status: "running",
+    endpoints: {
+      auth: `${API_BASE}/auth`,
+      market: `${API_BASE}/market`,
+      signals: `${API_BASE}/signals`,
+      instances: `${API_BASE}/instances`,
+    },
+    webSocket: {
+      url: `${wsProtocol}://${host}`,
+      endpoints: {
+        trading: "/trading",
+        marketData: "/market-data",
+      },
+      info: `${API_BASE}/market/ws-info`,
+    },
   });
 });
 

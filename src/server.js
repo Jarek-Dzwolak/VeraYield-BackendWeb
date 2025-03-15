@@ -5,17 +5,20 @@
  * - Uruchomienie serwera HTTP
  * - Obsługę sygnałów zamknięcia
  * - Inicjalizację usług
+ * - Konfigurację serwera WebSocket
  */
 
 const http = require("http");
+const WebSocket = require("ws");
 const app = require("./app");
 const logger = require("./utils/logger");
 const instanceService = require("./services/instance.service");
 const dbService = require("./services/db.service");
+const binanceService = require("./services/binance.service");
+const wsService = require("./services/ws.service");
 
 // Pobierz port z zmiennych środowiskowych lub użyj domyślnego
 const PORT = process.env.PORT || 3000;
-
 // Utwórz serwer HTTP
 const server = http.createServer(app);
 
@@ -42,9 +45,21 @@ const initializeApp = async () => {
     await instanceService.initialize();
     logger.info("Zainicjalizowano serwis instancji");
 
+    // Inicjalizacja serwera WebSocket
+    logger.info("Inicjalizacja serwera WebSocket...");
+
+    // Utwórz serwer WebSocket
+    const wss = new WebSocket.Server({ server });
+
+    // Przekaż serwer WebSocket do serwisu WebSocket
+    wsService.initialize(wss, binanceService);
+
+    logger.info("Zainicjalizowano serwer WebSocket");
+
     // Uruchom serwer HTTP
     server.listen(PORT, () => {
       logger.info(`Serwer HTTP uruchomiony na porcie ${PORT}`);
+      logger.info(`Serwer WebSocket uruchomiony na ws://localhost:${PORT}`);
     });
 
     // Dodaj obsługę błędów serwera HTTP
@@ -85,6 +100,15 @@ const shutdown = async (signal) => {
     logger.info("Zatrzymano wszystkie instancje strategii");
   } catch (error) {
     logger.error(`Błąd podczas zatrzymywania instancji: ${error.message}`);
+  }
+
+  // Zamknij połączenia WebSocket
+  try {
+    logger.info("Zamykanie połączeń WebSocket...");
+    wsService.closeAllConnections();
+    logger.info("Zamknięto wszystkie połączenia WebSocket");
+  } catch (error) {
+    logger.error(`Błąd podczas zamykania połączeń WebSocket: ${error.message}`);
   }
 
   // Zamknij połączenie z bazą danych

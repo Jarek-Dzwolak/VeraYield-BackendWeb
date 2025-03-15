@@ -45,4 +45,6 @@ router.get("/volume/:symbol", marketController.getVolumeData);
 // Pobieranie danych statystycznych dotyczących rynku
 router.get("/stats/:symbol", marketController.getMarketStats);
 
+router.get("/ws-info", marketController.getWebSocketInfo);
+
 module.exports = router;

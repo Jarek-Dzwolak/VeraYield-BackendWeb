@@ -21,7 +21,8 @@ binance-trading-bot/
 │   │   ├── db.service.js       # Operacje na bazie danych
 │   │   ├── instance.service.js # Zarządzanie instancjami strategii
 │   │   └── index.js            # Eksportuje wszystkie serwisy
-│   │
+│   │   |__ ws.service.js       # Obsługa websocket
+|   |   
 │   ├── models/                 # Modele danych MongoDB
 │   │   ├── user.model.js       # Model użytkownika
 │   │   ├── signal.model.js     # Model sygnału handlowego

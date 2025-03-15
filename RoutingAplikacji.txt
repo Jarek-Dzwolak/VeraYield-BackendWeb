@@ -1,5 +1,6 @@
-1. Routingi Autentykacji (auth.routes.js)
+Dokumentacja Routingu Aplikacji
 
+1. Routingi Autentykacji (auth.routes.js)
 POST /api/v1/auth/register - Rejestracja nowego użytkownika
 POST /api/v1/auth/login - Logowanie użytkownika i generowanie tokenu JWT
 POST /api/v1/auth/logout - Wylogowanie użytkownika
@@ -12,7 +13,6 @@ GET /api/v1/auth/verify-reset-token/:token - Weryfikacja tokenu resetowania has�
 GET /api/v1/auth/status - Sprawdzenie aktualnego statusu autentykacji
 
 2. Routingi Danych Rynkowych (market.routes.js)
-
 GET /api/v1/market/ticker/:symbol - Pobieranie aktualnej ceny dla pary handlowej
 GET /api/v1/market/klines/:symbol - Pobieranie historycznych danych świecowych
 GET /api/v1/market/klines/:symbol/:interval - Pobieranie danych świecowych z określonym interwałem
@@ -22,9 +22,9 @@ GET /api/v1/market/indicators/:symbol - Pobieranie bieżących wskaźników tech
 GET /api/v1/market/analysis/:symbol - Pobieranie analizy rynku z rekomendacjami
 GET /api/v1/market/volume/:symbol - Pobieranie danych o wolumenie obrotu
 GET /api/v1/market/stats/:symbol - Pobieranie statystyk rynkowych (zmiana ceny, zmienność)
+GET /api/v1/market/ws-info - Pobieranie informacji o dostępnych endpointach WebSocket
 
 3. Routingi Sygnałów Handlowych (signal.routes.js)
-
 GET /api/v1/signals - Pobieranie wszystkich sygnałów z opcjonalnym filtrowaniem
 GET /api/v1/signals/instance/:instanceId - Pobieranie sygnałów dla konkretnej instancji
 GET /api/v1/signals/:signalId - Pobieranie konkretnego sygnału po ID
@@ -40,7 +40,6 @@ GET /api/v1/signals/export - Eksport sygnałów do CSV
 GET /api/v1/signals/date-range - Pobieranie sygnałów z określonego zakresu dat
 
 4. Routingi Instancji Strategii (instance.routes.js)
-
 GET /api/v1/instances - Pobieranie wszystkich instancji strategii
 GET /api/v1/instances/active - Pobieranie tylko aktywnych instancji
 GET /api/v1/instances/:instanceId - Pobieranie konkretnej instancji po ID
@@ -58,6 +57,12 @@ GET /api/v1/instances/compare/:instanceId1/:instanceId2 - Porównanie wyników d
 POST /api/v1/instances/stop-all - Zatrzymanie wszystkich instancji (tylko admin)
 
 5. Bazowe Routingi API (index.js)
-
 GET /api/v1 - Podstawowy endpoint do sprawdzenia działania API
 ALL /api/v1/* - Obsługa nieznanych tras API (404)
+
+6. WebSocket API
+WebSocket API umożliwia komunikację w czasie rzeczywistym z serwerem. Dostępne są następujące endpointy WebSocket:
+Endpointy WebSocket
+
+ws://localhost:3000/trading - Główny endpoint WebSocket do komunikacji związanej z tradingiem
+ws://localhost:3000/market-data - Endpoint do subskrybowania danych rynkowych

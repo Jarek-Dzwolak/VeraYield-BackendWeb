@@ -14,6 +14,64 @@ const MarketData = require("../models/market-data.model");
 const { isValidSymbol, isValidInterval } = require("../utils/validators");
 
 /**
+ * Pobieranie informacji o WebSocket
+ * @route GET /api/v1/market/ws-info
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ * @returns {Object} - Informacje o WebSocket
+ */
+const getWebSocketInfo = (req, res, next) => {
+  try {
+    // Pobierz host i protokół z nagłówków
+    const host = req.get("host") || "localhost:3000";
+    const protocol = req.protocol === "https" ? "wss" : "ws";
+
+    // Zwróć informacje o WebSocket
+    res.status(200).json({
+      webSocketUrl: `${protocol}://${host}`,
+      endpoints: {
+        trading: "/trading",
+        marketData: "/market-data",
+      },
+      supportedIntervals: [
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w",
+        "1M",
+      ],
+      messageFormat: {
+        subscribe: {
+          type: "subscribe",
+          symbol: "BTCUSDT",
+          interval: "15m",
+        },
+        unsubscribe: {
+          type: "unsubscribe",
+          symbol: "BTCUSDT",
+          interval: "15m",
+        },
+        getStatus: {
+          type: "getStatus",
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+/**
  * Pobiera aktualną cenę dla pary handlowej
  * @param {Object} req - Obiekt żądania
  * @param {Object} res - Obiekt odpowiedzi
@@ -593,4 +651,5 @@ module.exports = {
   getMarketAnalysis,
   getVolumeData,
   getMarketStats,
+  getWebSocketInfo,
 };

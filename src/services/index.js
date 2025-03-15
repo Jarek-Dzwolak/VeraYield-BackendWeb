@@ -9,6 +9,7 @@ const analysisService = require("./analysis.service");
 const signalService = require("./signal.service");
 const instanceService = require("./instance.service");
 const dbService = require("./db.service");
+const wsService = require("./ws.service");
 
 module.exports = {
   binanceService,
@@ -16,4 +17,5 @@ module.exports = {
   signalService,
   instanceService,
   dbService,
+  wsService,
 };

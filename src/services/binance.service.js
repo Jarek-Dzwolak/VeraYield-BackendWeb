@@ -23,6 +23,7 @@ class BinanceService extends EventEmitter {
     this.wsConnections = new Map(); // Mapa połączeń WebSocket (symbol -> wsConnection)
     this.candleData = new Map(); // Mapa danych świecowych (symbol+interval -> array of candles)
     this.pingIntervals = new Map(); // Mapa interwałów pingowania
+    this.clientSubscriptions = new Map(); // Mapa subskrypcji klientów
   }
 
   /**
@@ -349,6 +350,152 @@ class BinanceService extends EventEmitter {
     this.pingIntervals.clear();
 
     logger.info("Zamknięto wszystkie połączenia WebSocket");
+  }
+
+  /**
+   * Przekazuje dane kanałów Binance do klienta WebSocket
+   * @param {string} clientId - ID klienta
+   * @param {string} symbol - Para handlowa (np. 'BTCUSDT')
+   * @param {string} interval - Interwał czasowy (np. '15m', '1h')
+   * @param {Function} callback - Funkcja do przekazywania danych
+   */
+  subscribeClientToMarketData(clientId, symbol, interval, callback) {
+    const subscriptionKey = `${clientId}-${symbol}-${interval}`;
+
+    // Sprawdź, czy subskrypcja już istnieje
+    if (this.clientSubscriptions.has(subscriptionKey)) {
+      logger.warn(`Subskrypcja dla ${subscriptionKey} już istnieje`);
+      return;
+    }
+
+    logger.info(`Nowa subskrypcja klienta: ${subscriptionKey}`);
+
+    // Utwórz handler dla danych świecowych
+    const klineHandler = (data) => {
+      // Przekaż dane świecowe do klienta
+      if (
+        data.candle.symbol.toLowerCase() === symbol.toLowerCase() &&
+        data.candle.interval === interval
+      ) {
+        callback({
+          type: "kline",
+          data: data.candle,
+        });
+      }
+    };
+
+    // Dodaj nasłuchiwanie zdarzeń
+    this.on("kline", klineHandler);
+
+    // Zapisz subskrypcję
+    this.clientSubscriptions.set(subscriptionKey, {
+      handler: klineHandler,
+      symbol,
+      interval,
+    });
+
+    // Upewnij się, że jesteśmy podłączeni do odpowiedniego kanału Binance
+    const wsKey = `${symbol.toLowerCase()}-${interval}-frontend`;
+    if (!this.wsConnections.has(wsKey)) {
+      this.subscribeToKlines(symbol, interval, "frontend");
+    }
+
+    // Wyślij początkowe dane historyczne
+    const historicalData = this.getCachedCandles(symbol, interval);
+    if (historicalData) {
+      callback({
+        type: "historical",
+        data: historicalData,
+      });
+    } else {
+      // Jeśli nie mamy danych w pamięci, pobierz je
+      this.getHistoricalCandles(symbol, interval)
+        .then((candles) => {
+          callback({
+            type: "historical",
+            data: candles,
+          });
+        })
+        .catch((error) => {
+          logger.error(
+            `Błąd podczas pobierania danych historycznych: ${error.message}`
+          );
+        });
+    }
+
+    // Zwróć funkcję do anulowania subskrypcji
+    return () => {
+      this.unsubscribeClientFromMarketData(clientId, symbol, interval);
+    };
+  }
+
+  /**
+   * Anuluje subskrypcję klienta
+   * @param {string} clientId - ID klienta
+   * @param {string} symbol - Para handlowa
+   * @param {string} interval - Interwał czasowy
+   */
+  unsubscribeClientFromMarketData(clientId, symbol, interval) {
+    const subscriptionKey = `${clientId}-${symbol}-${interval}`;
+
+    // Sprawdź, czy subskrypcja istnieje
+    if (!this.clientSubscriptions.has(subscriptionKey)) {
+      logger.warn(`Brak subskrypcji dla ${subscriptionKey}`);
+      return;
+    }
+
+    // Pobierz informacje o subskrypcji
+    const subscription = this.clientSubscriptions.get(subscriptionKey);
+
+    // Usuń nasłuchiwanie zdarzeń
+    this.removeListener("kline", subscription.handler);
+
+    // Usuń subskrypcję
+    this.clientSubscriptions.delete(subscriptionKey);
+
+    logger.info(`Anulowano subskrypcję klienta: ${subscriptionKey}`);
+
+    // Sprawdź, czy kanał jest jeszcze używany
+    const prefix = `${symbol.toLowerCase()}-${interval}`;
+    let hasActiveSubscriptions = false;
+
+    for (const key of this.clientSubscriptions.keys()) {
+      if (key.includes(`-${symbol}-${interval}`)) {
+        hasActiveSubscriptions = true;
+        break;
+      }
+    }
+
+    // Jeśli nikt już nie korzysta z tego kanału, zamknij połączenie
+    if (!hasActiveSubscriptions) {
+      this.unsubscribeFromKlines(symbol, interval, "frontend");
+    }
+  }
+
+  /**
+   * Anuluje wszystkie subskrypcje dla danego klienta
+   * @param {string} clientId - ID klienta
+   */
+  unsubscribeAllClientData(clientId) {
+    // Zbierz wszystkie subskrypcje dla tego klienta
+    const clientSubscriptions = [];
+
+    for (const [key, subscription] of this.clientSubscriptions.entries()) {
+      if (key.startsWith(`${clientId}-`)) {
+        clientSubscriptions.push({
+          key,
+          symbol: subscription.symbol,
+          interval: subscription.interval,
+        });
+      }
+    }
+
+    // Anuluj każdą subskrypcję
+    for (const sub of clientSubscriptions) {
+      this.unsubscribeClientFromMarketData(clientId, sub.symbol, sub.interval);
+    }
+
+    logger.info(`Anulowano wszystkie subskrypcje dla klienta: ${clientId}`);
   }
 }
 
