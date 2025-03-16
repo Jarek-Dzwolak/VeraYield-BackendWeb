@@ -7,7 +7,8 @@
  * - Rejestrację tras
  * - Obsługę błędów
  */
-
+require("dotenv").config();
+console.log("JWT_SECRET loaded:", process.env.JWT_SECRET ? "Yes" : "No");
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");

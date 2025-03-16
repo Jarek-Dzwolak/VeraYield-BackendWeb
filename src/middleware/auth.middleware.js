@@ -12,8 +12,7 @@ const User = require("../models/user.model");
 const logger = require("../utils/logger");
 
 // Sekret JWT (w produkcji powinien być w zmiennych środowiskowych)
-const JWT_SECRET = process.env.JWT_SECRET || "binance-trading-bot-secret";
-
+const JWT_SECRET = process.env.JWT_SECRET;
 /**
  * Weryfikuje token JWT
  * @param {Object} req - Obiekt żądania

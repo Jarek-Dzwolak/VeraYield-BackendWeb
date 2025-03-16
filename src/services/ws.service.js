@@ -11,7 +11,10 @@
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid"); // Jeśli nie masz uuid, zainstaluj: npm install uuid
 const logger = require("../utils/logger");
+const jwt = require("jsonwebtoken");
 
+// Sekret JWT (powinien być zgodny z tym z auth.middleware.js)
+const JWT_SECRET = process.env.JWT_SECRET;
 class WebSocketService {
   constructor() {
     this.wss = null;
@@ -30,66 +33,136 @@ class WebSocketService {
 
     // Obsługa nowych połączeń
     this.wss.on("connection", (ws, req) => {
-      // Generuj unikalny identyfikator dla klienta
-      const clientId = uuidv4();
+      try {
+        // Pobierz token z URL (np. ?token=xxx)
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const token = url.searchParams.get("token");
 
-      // Dodaj klienta do mapy
-      this.clients.set(ws, {
-        id: clientId,
-        path: req.url,
-        subscriptions: [],
-        connected: Date.now(),
-      });
-
-      logger.info(
-        `Nowe połączenie WebSocket: id=${clientId}, ścieżka=${req.url}`
-      );
-
-      // Obsługa wiadomości od klienta
-      ws.on("message", (message) => {
-        try {
-          const data = JSON.parse(message);
-          this._handleClientMessage(ws, data);
-        } catch (error) {
-          logger.error(
-            `Błąd podczas przetwarzania wiadomości WebSocket: ${error.message}`
+        if (!token) {
+          // Wyślij komunikat o błędzie przed zamknięciem połączenia
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Unauthorized",
+              message: "No authorization token provided",
+            })
           );
-          this._sendError(ws, "Nieprawidłowy format wiadomości");
+
+          // Zamknij połączenie z kodem 1008 (Policy Violation)
+          ws.close(1008, "Unauthorized: No token provided");
+          logger.error(`Połączenie WebSocket bez tokenu odrzucone`);
+          return;
         }
-      });
 
-      // Obsługa zamknięcia połączenia
-      ws.on("close", () => {
-        const client = this.clients.get(ws);
-        if (client) {
-          logger.info(`Zamknięto połączenie WebSocket: id=${client.id}`);
+        // Weryfikacja tokenu JWT
+        let decoded;
+        try {
+          decoded = jwt.verify(token, JWT_SECRET);
+        } catch (tokenError) {
+          // Wyślij komunikat o błędzie przed zamknięciem połączenia
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "Unauthorized",
+              message: "Invalid token",
+            })
+          );
 
-          // Anuluj wszystkie subskrypcje
-          if (this.binanceService) {
-            this.binanceService.unsubscribeAllClientData(client.id);
-          }
-
-          // Usuń klienta z mapy
-          this.clients.delete(ws);
+          ws.close(1008, "Unauthorized: Invalid token");
+          logger.error(`Nieprawidłowy token JWT: ${tokenError.message}`);
+          return;
         }
-      });
 
-      // Obsługa błędów
-      ws.on("error", (error) => {
-        const client = this.clients.get(ws);
-        const clientId = client ? client.id : "nieznany";
-        logger.error(
-          `Błąd WebSocket dla klienta ${clientId}: ${error.message}`
+        // Generuj unikalny identyfikator dla klienta
+        const clientId = uuidv4();
+
+        // Dodaj klienta do mapy
+        this.clients.set(ws, {
+          id: clientId,
+          userId: decoded.id,
+          email: decoded.email,
+          role: decoded.role,
+          path: req.url,
+          subscriptions: [],
+          connected: Date.now(),
+        });
+
+        logger.info(
+          `Nowe połączenie WebSocket: id=${clientId}, użytkownik=${decoded.email}, rola=${decoded.role}`
         );
-      });
 
-      // Wyślij potwierdzenie połączenia
-      this._sendToClient(ws, {
-        type: "connection",
-        status: "connected",
-        clientId,
-        timestamp: Date.now(),
-      });
+        // Obsługa wiadomości od klienta
+        ws.on("message", (message) => {
+          try {
+            const data = JSON.parse(message);
+            this._handleClientMessage(ws, data);
+          } catch (error) {
+            logger.error(
+              `Błąd podczas przetwarzania wiadomości WebSocket: ${error.message}`
+            );
+            this._sendError(ws, "Nieprawidłowy format wiadomości");
+          }
+        });
+
+        // Obsługa zamknięcia połączenia
+        ws.on("close", () => {
+          const client = this.clients.get(ws);
+          if (client) {
+            logger.info(
+              `Zamknięto połączenie WebSocket: id=${client.id}, użytkownik=${client.email}`
+            );
+
+            // Anuluj wszystkie subskrypcje
+            if (this.binanceService) {
+              this.binanceService.unsubscribeAllClientData(client.id);
+            }
+
+            // Usuń klienta z mapy
+            this.clients.delete(ws);
+          }
+        });
+
+        // Obsługa błędów
+        ws.on("error", (error) => {
+          const client = this.clients.get(ws);
+          const clientId = client ? client.id : "nieznany";
+          const userEmail = client ? client.email : "nieznany";
+          logger.error(
+            `Błąd WebSocket dla klienta ${clientId} (${userEmail}): ${error.message}`
+          );
+        });
+
+        // Wyślij potwierdzenie połączenia
+        this._sendToClient(ws, {
+          type: "connection",
+          status: "connected",
+          clientId,
+          userEmail: decoded.email,
+          timestamp: Date.now(),
+        });
+      } catch (e) {
+        logger.error(
+          `Ogólny błąd podczas obsługi połączenia WebSocket: ${e.message}`
+        );
+
+        try {
+          // Próba wysłania informacji o błędzie
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              error: "InternalError",
+              message: "Internal server error during connection setup",
+            })
+          );
+
+          ws.close(1011, "Internal server error");
+        } catch (sendError) {
+          // Jeśli nawet nie możemy wysłać komunikatu o błędzie, po prostu logujemy
+          logger.error(
+            `Nie udało się wysłać komunikatu o błędzie: ${sendError.message}`
+          );
+        }
+      }
     });
 
     logger.info("Serwer WebSocket zainicjalizowany");
@@ -287,6 +360,7 @@ class WebSocketService {
     this._sendToClient(ws, {
       type: "status",
       clientId: client.id,
+      userEmail: client.email,
       connected: client.connected,
       subscriptions: client.subscriptions,
       connectionTime: Date.now() - client.connected,

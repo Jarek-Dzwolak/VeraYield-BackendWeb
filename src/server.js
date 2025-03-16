@@ -49,7 +49,36 @@ const initializeApp = async () => {
     logger.info("Inicjalizacja serwera WebSocket...");
 
     // Utwórz serwer WebSocket
-    const wss = new WebSocket.Server({ server });
+    const wss = new WebSocket.Server({
+      server,
+      // Opcjonalna konfiguracja CORS jeśli frontend i backend są na różnych domenach
+      verifyClient: (info, callback) => {
+        // Sprawdź, czy żądanie pochodzi z dozwolonych źródeł
+        const origin = info.req.headers.origin;
+        const allowedOrigins = [
+          "http://localhost:3000",
+          "http://127.0.0.1:3000",
+          // Dodaj tutaj inne dozwolone originy dla Twojej aplikacji
+        ];
+
+        // W środowisku deweloperskim można pominąć weryfikację origin
+        if (
+          process.env.NODE_ENV === "development" ||
+          !origin ||
+          allowedOrigins.includes(origin)
+        ) {
+          callback(true);
+        } else {
+          callback(false, 403, "Niedozwolone źródło");
+        }
+        if (!process.env.JWT_SECRET) {
+          console.error(
+            "BŁĄD: Brak wymaganej zmiennej środowiskowej JWT_SECRET"
+          );
+          process.exit(1);
+        }
+      },
+    });
 
     // Przekaż serwer WebSocket do serwisu WebSocket
     wsService.initialize(wss, binanceService);
