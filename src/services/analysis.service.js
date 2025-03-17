@@ -69,6 +69,29 @@ class AnalysisService extends EventEmitter {
         return;
       }
 
+      // Jeśli to świeca 15-minutowa, aktualizuj także kanał Hursta dla bieżących danych
+      if (candle.interval === "15m") {
+        const config = this.instances.get(instanceId);
+        const candles15m = binanceService.getCachedCandles(
+          config.symbol,
+          "15m"
+        );
+
+        // Aktualizuj kanał Hursta z najnowszymi danymi (również niezamkniętymi)
+        if (candles15m && candles15m.length > 0) {
+          // Dodaj bieżącą świecę, jeśli nie jest już zawarta w danych
+          const lastCandle = candles15m[candles15m.length - 1];
+          if (lastCandle.openTime !== candle.openTime) {
+            const updatedCandles = [...candles15m, candle];
+            this.updateHurstChannel(instanceId, updatedCandles);
+          } else {
+            // Aktualizuj ostatnią świecę w danych
+            const updatedCandles = [...candles15m.slice(0, -1), candle];
+            this.updateHurstChannel(instanceId, updatedCandles);
+          }
+        }
+      }
+
       // Wykryj ewentualne sygnały
       this.detectSignals(instanceId, previousPrice, currentPrice);
 

@@ -12,6 +12,7 @@ const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid"); // Jeśli nie masz uuid, zainstaluj: npm install uuid
 const logger = require("../utils/logger");
 const jwt = require("jsonwebtoken");
+const analysisService = require("./analysis.service");
 
 // Sekret JWT (powinien być zgodny z tym z auth.middleware.js)
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -165,6 +166,30 @@ class WebSocketService {
       }
     });
 
+    // Nasłuchuj aktualizacji kanału Hursta
+    analysisService.on("hurstUpdated", (data) => {
+      // Sprawdź, czy to instancja dla frontendu
+      if (data.instanceId === "frontend") {
+        // Wyślij aktualizację do wszystkich klientów subskrybujących ten symbol
+        this.broadcastToSymbolSubscribers(data.result.lastCandle.symbol, {
+          type: "indicators",
+          hurstChannel: data.result,
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    // Nasłuchuj aktualizacji EMA
+    analysisService.on("emaUpdated", (data) => {
+      if (data.instanceId === "frontend") {
+        this.broadcastToSymbolSubscribers(data.candle.symbol, {
+          type: "indicators",
+          emaValue: data.value,
+          timestamp: Date.now(),
+        });
+      }
+    });
+
     logger.info("Serwer WebSocket zainicjalizowany");
   }
 
@@ -294,6 +319,22 @@ class WebSocketService {
       dataCallback
     );
 
+    // Po udanej subskrypcji, wyślij również informacje o kanale Hursta
+    const instanceId = "frontend"; // Używamy stałego ID dla frontendu
+    const analysisState = analysisService.getInstanceAnalysisState(instanceId);
+
+    if (analysisState && analysisState.hurstChannel) {
+      this._sendToClient(ws, {
+        type: "indicators",
+        subscriptionId,
+        symbol,
+        interval,
+        hurstChannel: analysisState.hurstChannel,
+        emaValue: analysisState.emaValue,
+        timestamp: Date.now(),
+      });
+    }
+
     // Potwierdzenie subskrypcji
     this._sendToClient(ws, {
       type: "subscribed",
@@ -413,6 +454,24 @@ class WebSocketService {
         }
       }
     });
+  }
+
+  /**
+   * Wysyła wiadomość do wszystkich klientów subskrybujących dany symbol
+   * @param {string} symbol - Symbol pary handlowej
+   * @param {Object} data - Dane do wysłania
+   */
+  broadcastToSymbolSubscribers(symbol, data) {
+    for (const [ws, client] of this.clients.entries()) {
+      // Sprawdź, czy klient subskrybuje dany symbol
+      const hasSymbolSubscription = client.subscriptions.some((s) =>
+        s.startsWith(`${symbol.toLowerCase()}-`)
+      );
+
+      if (hasSymbolSubscription && ws.readyState === WebSocket.OPEN) {
+        this._sendToClient(ws, data);
+      }
+    }
   }
 
   /**

@@ -126,12 +126,11 @@ class BinanceService extends EventEmitter {
             interval: message.k.i,
           };
 
-          // Zaktualizuj dane w pamięci
-          const dataKey = `${symbol}-${interval}`;
-          const existingCandles = this.candleData.get(dataKey) || [];
-
-          // Jeśli to nowa świeca, dodajemy ją do listy
+          // Zaktualizuj dane w pamięci - tylko dla zamkniętych świec
           if (candle.isFinal) {
+            const dataKey = `${symbol}-${interval}`;
+            const existingCandles = this.candleData.get(dataKey) || [];
+
             // Znajdź i zastąp istniejącą świecę o tym samym czasie otwarcia, jeśli istnieje
             const existingIndex = existingCandles.findIndex(
               (c) => c.openTime === candle.openTime
@@ -153,7 +152,7 @@ class BinanceService extends EventEmitter {
             this.candleData.set(dataKey, existingCandles);
           }
 
-          // Emituj zdarzenie z danymi
+          // Emituj zdarzenie z danymi dla KAŻDEJ aktualizacji, nie tylko zamkniętych świec
           this.emit("kline", {
             candle,
             instanceId,
@@ -164,7 +163,7 @@ class BinanceService extends EventEmitter {
             this.emit("klineClosed", {
               candle,
               instanceId,
-              allCandles: this.candleData.get(dataKey),
+              allCandles: this.candleData.get(`${symbol}-${interval}`),
             });
           }
         }
