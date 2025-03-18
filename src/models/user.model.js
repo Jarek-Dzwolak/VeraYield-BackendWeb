@@ -6,6 +6,7 @@
  * - Informacje osobowe
  * - Uprawnienia
  * - Preferencje
+ * - Dane finansowe i historię transakcji
  */
 
 const mongoose = require("mongoose");
@@ -95,6 +96,81 @@ const UserSchema = new Schema({
       ref: "Instance",
     },
   ],
+
+  // Dane finansowe użytkownika
+  financials: {
+    // Dostępny bilans (niezaalokowany do żadnej instancji)
+    balance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Całkowity zysk ze wszystkich transakcji
+    totalProfit: {
+      type: Number,
+      default: 0,
+    },
+    // Liczba wszystkich transakcji
+    totalTrades: {
+      type: Number,
+      default: 0,
+    },
+    // Liczba zyskownych transakcji
+    successfulTrades: {
+      type: Number,
+      default: 0,
+    },
+    // Data ostatniej transakcji
+    lastTradeDate: {
+      type: Date,
+    },
+    // Historia transakcji
+    tradeHistory: [
+      {
+        instanceId: {
+          type: String,
+          required: true,
+        },
+        symbol: {
+          type: String,
+          required: true,
+        },
+        entryTime: {
+          type: Date,
+          required: true,
+        },
+        exitTime: {
+          type: Date,
+          required: true,
+        },
+        entryPrice: {
+          type: Number,
+          required: true,
+        },
+        exitPrice: {
+          type: Number,
+          required: true,
+        },
+        amount: {
+          type: Number,
+          required: true,
+        },
+        profit: {
+          type: Number,
+          required: true,
+        },
+        profitPercent: {
+          type: Number,
+          required: true,
+        },
+        signalIds: [
+          {
+            type: String,
+          },
+        ],
+      },
+    ],
+  },
 
   // Preferencje użytkownika
   preferences: {
@@ -239,6 +315,55 @@ UserSchema.statics.findByEmail = async function (email) {
   const result = await this.findOne({ email: email.toLowerCase() });
   console.log("Znaleziono użytkownika:", result ? "Tak" : "Nie");
   return result;
+};
+
+/**
+ * Metoda - dodawanie środków do konta użytkownika
+ * @param {number} amount - Kwota do dodania
+ * @returns {Promise<void>}
+ */
+UserSchema.methods.addFunds = async function (amount) {
+  if (!this.financials) {
+    this.financials = {
+      balance: 0,
+      totalProfit: 0,
+      totalTrades: 0,
+      successfulTrades: 0,
+      tradeHistory: [],
+    };
+  }
+
+  this.financials.balance += amount;
+  await this.save();
+};
+
+/**
+ * Metoda - dodawanie transakcji do historii
+ * @param {Object} tradeData - Dane transakcji
+ * @returns {Promise<void>}
+ */
+UserSchema.methods.addTradeToHistory = async function (tradeData) {
+  if (!this.financials) {
+    this.financials = {
+      balance: 0,
+      totalProfit: 0,
+      totalTrades: 0,
+      successfulTrades: 0,
+      tradeHistory: [],
+    };
+  }
+
+  this.financials.tradeHistory.push(tradeData);
+  this.financials.totalTrades += 1;
+
+  if (tradeData.profit > 0) {
+    this.financials.successfulTrades += 1;
+  }
+
+  this.financials.totalProfit += tradeData.profit;
+  this.financials.lastTradeDate = new Date();
+
+  await this.save();
 };
 
 // Eksportuj model

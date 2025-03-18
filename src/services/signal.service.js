@@ -5,12 +5,15 @@
  * - Przetwarzanie sygnałów z serwisu analizy
  * - Generowanie i filtrowanie sygnałów handlowych
  * - Przechowywanie sygnałów w bazie danych
+ * - Współpracę z AccountService w zakresie zarządzania środkami
  */
 
 const analysisService = require("./analysis.service");
+const accountService = require("./account.service");
 const logger = require("../utils/logger");
 const { EventEmitter } = require("events");
 const Signal = require("../models/signal.model");
+const Instance = require("../models/instance.model");
 
 class SignalService extends EventEmitter {
   constructor() {
@@ -46,48 +49,96 @@ class SignalService extends EventEmitter {
       // Pobierz bieżący stan pozycji dla instancji
       const currentPosition = this.activePositions.get(instanceId);
 
+      // Pobierz instancję, aby uzyskać dostęp do informacji o finansach
+      const instance = await Instance.findById(instanceId);
+
+      if (!instance) {
+        logger.error(`Nie znaleziono instancji ${instanceId}`);
+        return;
+      }
+
+      // Sprawdź, czy instancja ma dane finansowe
+      if (!instance.financials || instance.financials.availableBalance <= 0) {
+        logger.warn(
+          `Instancja ${instanceId} nie ma dostępnych środków - pominięto sygnał wejścia`
+        );
+        return;
+      }
+
       // Jeśli nie mamy aktywnej pozycji, to jest to pierwsze wejście
       if (!currentPosition) {
-        // Utwórz nową pozycję
-        const newPosition = {
-          instanceId,
-          symbol: analysisService.instances.get(instanceId).symbol,
-          entryTime: timestamp,
-          entryPrice: price,
-          entryType: "first",
-          capitalAllocation: 0.1, // 10% kapitału
-          status: "active",
-          entries: [
-            {
-              time: timestamp,
-              price,
-              type,
-              allocation: 0.1, // 10% kapitału
-            },
-          ],
-          history: [],
-        };
+        // Określ kwotę alokacji (10% dostępnych środków)
+        const allocationPercent = 0.1;
+        const allocationAmount =
+          instance.financials.availableBalance * allocationPercent;
 
-        // Zapisz pozycję
-        this.activePositions.set(instanceId, newPosition);
-
-        // Generuj sygnał w bazie danych
-        await this.createSignalInDatabase({
+        // Utwórz nowy sygnał w bazie danych
+        const signal = await this.createSignalInDatabase({
           instanceId,
-          symbol: newPosition.symbol,
+          symbol: instance.symbol,
           type: "entry",
           subType: "first",
           price,
-          allocation: 0.1,
+          allocation: allocationPercent,
+          amount: allocationAmount,
           timestamp,
+          status: "pending", // Przed wykonaniem przez AccountService
         });
 
-        // Emituj zdarzenie
-        this.emit("newPosition", newPosition);
+        // Zablokuj środki na pozycję
+        try {
+          await accountService.lockFundsForPosition(
+            instanceId,
+            allocationAmount,
+            signal._id
+          );
 
-        logger.info(
-          `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}`
-        );
+          // Utwórz nową pozycję w pamięci
+          const newPosition = {
+            instanceId,
+            symbol: instance.symbol,
+            entryTime: timestamp,
+            entryPrice: price,
+            entryType: "first",
+            capitalAllocation: allocationPercent,
+            capitalAmount: allocationAmount,
+            signalId: signal._id,
+            status: "active",
+            entries: [
+              {
+                time: timestamp,
+                price,
+                type,
+                allocation: allocationPercent,
+                amount: allocationAmount,
+                signalId: signal._id,
+              },
+            ],
+            history: [],
+          };
+
+          // Zapisz pozycję
+          this.activePositions.set(instanceId, newPosition);
+
+          // Emituj zdarzenie
+          this.emit("newPosition", newPosition);
+
+          logger.info(
+            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${allocationAmount}`
+          );
+        } catch (error) {
+          logger.error(
+            `Nie udało się zablokować środków dla pozycji: ${error.message}`
+          );
+
+          // Oznacz sygnał jako anulowany
+          await Signal.findByIdAndUpdate(signal._id, {
+            status: "canceled",
+            metadata: {
+              cancelReason: `Nie udało się zablokować środków: ${error.message}`,
+            },
+          });
+        }
       }
       // Jeśli mamy już pozycję, sprawdź, czy to drugie lub trzecie wejście
       else if (currentPosition.status === "active") {
@@ -113,48 +164,79 @@ class SignalService extends EventEmitter {
           return;
         }
 
-        // Określ alokację kapitału
-        let allocation = 0;
+        // Określ alokację kapitału i typ wejścia
+        let allocationPercent = 0;
         let entryType = "";
 
         if (entryCount === 1) {
           // Drugie wejście: 25% kapitału
-          allocation = 0.25;
+          allocationPercent = 0.25;
           entryType = "second";
         } else if (entryCount === 2) {
           // Trzecie wejście: 50% kapitału
-          allocation = 0.5;
+          allocationPercent = 0.5;
           entryType = "third";
         }
 
-        // Dodaj nowe wejście do pozycji
-        currentPosition.entries.push({
-          time: timestamp,
-          price,
-          type,
-          allocation,
-        });
+        // Oblicz kwotę na podstawie dostępnych środków
+        const allocationAmount =
+          instance.financials.availableBalance * allocationPercent;
 
-        // Zaktualizuj alokację kapitału
-        currentPosition.capitalAllocation += allocation;
-
-        // Generuj sygnał w bazie danych
-        await this.createSignalInDatabase({
+        // Utwórz sygnał w bazie danych
+        const signal = await this.createSignalInDatabase({
           instanceId,
           symbol: currentPosition.symbol,
           type: "entry",
           subType: entryType,
           price,
-          allocation,
+          allocation: allocationPercent,
+          amount: allocationAmount,
           timestamp,
+          status: "pending",
         });
 
-        // Emituj zdarzenie
-        this.emit("positionUpdated", currentPosition);
+        // Zablokuj środki na pozycję
+        try {
+          await accountService.lockFundsForPosition(
+            instanceId,
+            allocationAmount,
+            signal._id
+          );
 
-        logger.info(
-          `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${allocation * 100}%)`
-        );
+          // Dodaj nowe wejście do pozycji
+          currentPosition.entries.push({
+            time: timestamp,
+            price,
+            type,
+            allocation: allocationPercent,
+            amount: allocationAmount,
+            signalId: signal._id,
+          });
+
+          // Zaktualizuj alokację kapitału
+          currentPosition.capitalAllocation += allocationPercent;
+          currentPosition.capitalAmount =
+            (currentPosition.capitalAmount || 0) + allocationAmount;
+
+          // Emituj zdarzenie
+          this.emit("positionUpdated", currentPosition);
+
+          logger.info(
+            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${allocationPercent * 100}%, kwota: ${allocationAmount})`
+          );
+        } catch (error) {
+          logger.error(
+            `Nie udało się zablokować środków dla dodatkowego wejścia: ${error.message}`
+          );
+
+          // Oznacz sygnał jako anulowany
+          await Signal.findByIdAndUpdate(signal._id, {
+            status: "canceled",
+            metadata: {
+              cancelReason: `Nie udało się zablokować środków: ${error.message}`,
+            },
+          });
+        }
       }
     } catch (error) {
       logger.error(
@@ -186,40 +268,77 @@ class SignalService extends EventEmitter {
       const entryAvgPrice = this.calculateAverageEntryPrice(currentPosition);
       const profitPercent = (price / entryAvgPrice - 1) * 100;
 
-      // Zamknij pozycję
-      currentPosition.exitTime = timestamp;
-      currentPosition.exitPrice = price;
-      currentPosition.exitType = type;
-      currentPosition.profitPercent = profitPercent;
-      currentPosition.status = "closed";
-
-      // Dodaj do historii
-      if (!this.positionHistory.has(instanceId)) {
-        this.positionHistory.set(instanceId, []);
+      // Oblicz łączną kwotę wejściową
+      let totalEntryAmount = 0;
+      for (const entry of currentPosition.entries) {
+        totalEntryAmount += entry.amount;
       }
 
-      this.positionHistory.get(instanceId).push({ ...currentPosition });
+      // Oblicz wartość końcową
+      const exitAmount = totalEntryAmount * (1 + profitPercent / 100);
+      const profit = exitAmount - totalEntryAmount;
 
-      // Usuń z aktywnych pozycji
-      this.activePositions.delete(instanceId);
-
-      // Generuj sygnał w bazie danych
-      await this.createSignalInDatabase({
+      // Utwórz sygnał wyjścia w bazie danych
+      const exitSignal = await this.createSignalInDatabase({
         instanceId,
         symbol: currentPosition.symbol,
         type: "exit",
         subType: type,
         price,
         profitPercent,
+        exitAmount,
+        profit,
         timestamp,
+        status: "pending",
       });
 
-      // Emituj zdarzenie
-      this.emit("positionClosed", currentPosition);
+      try {
+        // Finalizuj pozycję w AccountService
+        await accountService.finalizePosition(
+          instanceId,
+          currentPosition.entries[0].signalId, // ID pierwszego sygnału wejścia
+          exitSignal._id, // ID sygnału wyjścia
+          totalEntryAmount,
+          exitAmount
+        );
 
-      logger.info(
-        `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%)`
-      );
+        // Zaktualizuj pozycję w pamięci
+        currentPosition.exitTime = timestamp;
+        currentPosition.exitPrice = price;
+        currentPosition.exitType = type;
+        currentPosition.profitPercent = profitPercent;
+        currentPosition.exitAmount = exitAmount;
+        currentPosition.profit = profit;
+        currentPosition.status = "closed";
+        currentPosition.exitSignalId = exitSignal._id;
+
+        // Dodaj do historii
+        if (!this.positionHistory.has(instanceId)) {
+          this.positionHistory.set(instanceId, []);
+        }
+
+        this.positionHistory.get(instanceId).push({ ...currentPosition });
+
+        // Usuń z aktywnych pozycji
+        this.activePositions.delete(instanceId);
+
+        // Emituj zdarzenie
+        this.emit("positionClosed", currentPosition);
+
+        logger.info(
+          `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)})`
+        );
+      } catch (error) {
+        logger.error(`Nie udało się sfinalizować pozycji: ${error.message}`);
+
+        // Oznacz sygnał wyjścia jako anulowany
+        await Signal.findByIdAndUpdate(exitSignal._id, {
+          status: "canceled",
+          metadata: {
+            cancelReason: `Nie udało się sfinalizować pozycji: ${error.message}`,
+          },
+        });
+      }
     } catch (error) {
       logger.error(
         `Błąd podczas przetwarzania sygnału wyjścia: ${error.message}`
@@ -258,9 +377,14 @@ class SignalService extends EventEmitter {
         subType: signalData.subType,
         price: signalData.price,
         allocation: signalData.allocation,
+        amount: signalData.amount,
         profitPercent: signalData.profitPercent,
+        profit: signalData.profit,
+        exitAmount: signalData.exitAmount,
         timestamp: signalData.timestamp,
+        status: signalData.status || "pending",
         metadata: signalData.metadata || {},
+        entrySignalId: signalData.entrySignalId,
       });
 
       await signal.save();
@@ -340,30 +464,37 @@ class SignalService extends EventEmitter {
       const exitSignals = await Signal.find({
         ...filters,
         type: "exit",
+        status: "executed",
       });
 
       // Oblicz statystyki
       let totalTrades = exitSignals.length;
       let profitableTrades = 0;
       let totalProfit = 0;
+      let totalAmount = 0;
       let maxProfit = 0;
       let maxLoss = 0;
 
       for (const signal of exitSignals) {
-        const profit = signal.profitPercent || 0;
+        const profit = signal.profit || 0;
+        const profitPercent = signal.profitPercent || 0;
 
         totalProfit += profit;
+
+        if (signal.amount) {
+          totalAmount += signal.amount;
+        }
 
         if (profit > 0) {
           profitableTrades++;
         }
 
-        if (profit > maxProfit) {
-          maxProfit = profit;
+        if (profitPercent > maxProfit) {
+          maxProfit = profitPercent;
         }
 
-        if (profit < maxLoss) {
-          maxLoss = profit;
+        if (profitPercent < maxLoss) {
+          maxLoss = profitPercent;
         }
       }
 
@@ -371,10 +502,12 @@ class SignalService extends EventEmitter {
         totalTrades,
         profitableTrades,
         winRate: totalTrades > 0 ? (profitableTrades / totalTrades) * 100 : 0,
-        averageProfit: totalTrades > 0 ? totalProfit / totalTrades : 0,
+        averageProfitPercent: totalTrades > 0 ? totalProfit / totalTrades : 0,
         totalProfit,
-        maxProfit,
-        maxLoss,
+        totalAmount,
+        maxProfitPercent: maxProfit,
+        maxLossPercent: maxLoss,
+        roi: totalAmount > 0 ? (totalProfit / totalAmount) * 100 : 0,
       };
     } catch (error) {
       logger.error(

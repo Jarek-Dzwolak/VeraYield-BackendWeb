@@ -39,22 +39,26 @@ DELETE /api/v1/signals/instance/:instanceId - Czyszczenie historii sygnałów (t
 GET /api/v1/signals/export - Eksport sygnałów do CSV
 GET /api/v1/signals/date-range - Pobieranie sygnałów z określonego zakresu dat
 
-4. Routingi Instancji Strategii (instance.routes.js)
-GET /api/v1/instances - Pobieranie wszystkich instancji strategii
-GET /api/v1/instances/active - Pobieranie tylko aktywnych instancji
-GET /api/v1/instances/:instanceId - Pobieranie konkretnej instancji po ID
-POST /api/v1/instances - Tworzenie nowej instancji
-PUT /api/v1/instances/:instanceId - Aktualizacja instancji
-DELETE /api/v1/instances/:instanceId - Usuwanie instancji
-POST /api/v1/instances/:instanceId/start - Uruchamianie instancji
-POST /api/v1/instances/:instanceId/stop - Zatrzymywanie instancji
-GET /api/v1/instances/:instanceId/state - Pobieranie bieżącego stanu instancji
-GET /api/v1/instances/:instanceId/results - Pobieranie wyników instancji
-GET /api/v1/instances/:instanceId/config - Pobieranie konfiguracji instancji
-PUT /api/v1/instances/:instanceId/config - Aktualizacja konfiguracji instancji
-POST /api/v1/instances/:instanceId/clone - Klonowanie instancji
-GET /api/v1/instances/compare/:instanceId1/:instanceId2 - Porównanie wyników dwóch instancji
-POST /api/v1/instances/stop-all - Zatrzymanie wszystkich instancji (tylko admin)
+Routingi Instancji Strategii (instance.routes.js)
+Pobieranie danych:
+GET /api/v1/instances – Pobieranie wszystkich instancji strategii
+GET /api/v1/instances/active – Pobieranie tylko aktywnych instancji
+GET /api/v1/instances/:instanceId – Pobieranie konkretnej instancji po ID
+GET /api/v1/instances/:instanceId/state – Pobieranie bieżącego stanu instancji
+GET /api/v1/instances/:instanceId/results – Pobieranie wyników instancji
+GET /api/v1/instances/:instanceId/config – Pobieranie konfiguracji instancji
+GET /api/v1/instances/compare/:instanceId1/:instanceId2 – Porównanie wyników dwóch instancji
+Tworzenie i modyfikacja:
+POST /api/v1/instances – Tworzenie nowej instancji
+PUT /api/v1/instances/:instanceId – Aktualizacja instancji
+PUT /api/v1/instances/:instanceId/config – Aktualizacja konfiguracji instancji (wspiera nowe parametry: hurst.periods, hurst.upperDeviationFactor, hurst.lowerDeviationFactor, ema.periods, signals.minEntryTimeGap, signals.checkEMATrend, capitalAllocation.firstEntry, capitalAllocation.secondEntry, capitalAllocation.thirdEntry, intervals.hurst, intervals.ema)
+POST /api/v1/instances/:instanceId/clone – Klonowanie instancji
+Zarządzanie stanem:
+POST /api/v1/instances/:instanceId/start – Uruchamianie instancji
+POST /api/v1/instances/:instanceId/stop – Zatrzymywanie instancji
+POST /api/v1/instances/stop-all – Zatrzymanie wszystkich instancji (tylko admin)
+Usuwanie:
+DELETE /api/v1/instances/:instanceId – Usuwanie instancji
 
 5. Bazowe Routingi API (index.js)
 GET /api/v1 - Podstawowy endpoint do sprawdzenia działania API

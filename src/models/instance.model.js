@@ -121,6 +121,91 @@ const InstanceSchema = new Schema({
     },
   },
 
+  // Finansowe dane instancji
+  financials: {
+    // Przydzielony kapitał dla instancji
+    allocatedCapital: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Aktualny saldo instancji (dostępne + zablokowane w pozycjach)
+    currentBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Dostępne saldo (nie wykorzystane w pozycjach)
+    availableBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Zablokowane saldo (aktualnie w pozycjach)
+    lockedBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Całkowity zysk instancji
+    totalProfit: {
+      type: Number,
+      default: 0,
+    },
+    // Referencja do właściciela
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    // Aktywne pozycje
+    openPositions: [
+      {
+        signalId: {
+          type: String,
+          required: true,
+        },
+        amount: {
+          type: Number,
+          required: true,
+        },
+        lockedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+    // Historia zamkniętych pozycji
+    closedPositions: [
+      {
+        entrySignalId: {
+          type: String,
+          required: true,
+        },
+        exitSignalId: {
+          type: String,
+          required: true,
+        },
+        entryAmount: {
+          type: Number,
+          required: true,
+        },
+        exitAmount: {
+          type: Number,
+          required: true,
+        },
+        profit: {
+          type: Number,
+          required: true,
+        },
+        closedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+  },
+
   // Statystyki i metryki
   stats: {
     totalSignals: {
@@ -162,6 +247,52 @@ InstanceSchema.methods.hasActiveWebSocket = function () {
 // Metoda do uzyskania identyfikatora używanego w innych modelach
 InstanceSchema.methods.getInstanceId = function () {
   return this._id;
+};
+
+/**
+ * Metoda - aktualizacja bilansu instancji
+ * @param {Object} balanceUpdate - Dane do aktualizacji bilansu
+ * @returns {Promise<void>}
+ */
+InstanceSchema.methods.updateBalance = async function (balanceUpdate) {
+  if (!this.financials) {
+    this.financials = {
+      allocatedCapital: 0,
+      currentBalance: 0,
+      availableBalance: 0,
+      lockedBalance: 0,
+      totalProfit: 0,
+      openPositions: [],
+      closedPositions: [],
+    };
+  }
+
+  if (balanceUpdate.allocatedCapital) {
+    this.financials.allocatedCapital += balanceUpdate.allocatedCapital;
+    this.financials.currentBalance += balanceUpdate.allocatedCapital;
+    this.financials.availableBalance += balanceUpdate.allocatedCapital;
+  }
+
+  if (balanceUpdate.lockAmount) {
+    this.financials.availableBalance -= balanceUpdate.lockAmount;
+    this.financials.lockedBalance += balanceUpdate.lockAmount;
+  }
+
+  if (balanceUpdate.unlockAmount) {
+    this.financials.lockedBalance -= balanceUpdate.unlockAmount;
+  }
+
+  if (balanceUpdate.addAmount) {
+    this.financials.availableBalance += balanceUpdate.addAmount;
+    this.financials.currentBalance =
+      this.financials.availableBalance + this.financials.lockedBalance;
+  }
+
+  if (balanceUpdate.profit) {
+    this.financials.totalProfit += balanceUpdate.profit;
+  }
+
+  await this.save();
 };
 
 const Instance = mongoose.model("Instance", InstanceSchema);

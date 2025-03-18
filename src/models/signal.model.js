@@ -7,8 +7,8 @@
  * - Typ sygnału (wejście, wyjście)
  * - Podtyp sygnału (pierwsze wejście, drugie wejście, itp.)
  * - Cenę
- * - Alokację kapitału
- * - Procent zysku
+ * - Alokację kapitału i rzeczywistą kwotę
+ * - Procent zysku i kwotę zysku
  * - Znacznik czasu
  * - Metadane
  */
@@ -60,8 +60,24 @@ const SignalSchema = new Schema({
     max: 1,
   },
 
+  // Rzeczywista kwota alokacji - tylko dla sygnałów wejścia
+  amount: {
+    type: Number,
+    min: 0,
+  },
+
   // Procent zysku - tylko dla sygnałów wyjścia
   profitPercent: {
+    type: Number,
+  },
+
+  // Rzeczywista kwota zysku - tylko dla sygnałów wyjścia
+  profit: {
+    type: Number,
+  },
+
+  // Kwota po zamknięciu pozycji - tylko dla sygnałów wyjścia
+  exitAmount: {
     type: Number,
   },
 
@@ -78,12 +94,67 @@ const SignalSchema = new Schema({
     default: {},
   },
 
+  // Status sygnału (pending, executed, canceled)
+  status: {
+    type: String,
+    enum: ["pending", "executed", "canceled"],
+    default: "pending",
+  },
+
+  // Data wykonania sygnału (tylko dla status === "executed")
+  executedAt: {
+    type: Date,
+  },
+
+  // Dla sygnałów wyjścia - referencja do sygnału wejścia
+  entrySignalId: {
+    type: String,
+    index: true,
+  },
+
   // Data utworzenia rekordu
   createdAt: {
     type: Date,
     default: Date.now,
   },
 });
+
+// Indeks złożony dla szybszego wyszukiwania sygnałów
+SignalSchema.index({ instanceId: 1, type: 1, timestamp: -1 });
+
+/**
+ * Metoda - obliczanie wartości końcowej dla sygnału wyjścia
+ * @param {number} entryAmount - Kwota wejścia
+ * @returns {number} - Kwota wyjścia z uwzględnieniem zysku/straty
+ */
+SignalSchema.methods.calculateExitAmount = function (entryAmount) {
+  if (this.type !== "exit" || !this.profitPercent) {
+    return null;
+  }
+
+  return entryAmount * (1 + this.profitPercent / 100);
+};
+
+/**
+ * Metoda - zmiana statusu sygnału na wykonany
+ * @returns {Promise<void>}
+ */
+SignalSchema.methods.markAsExecuted = async function () {
+  this.status = "executed";
+  this.executedAt = new Date();
+  await this.save();
+};
+
+/**
+ * Metoda - zmiana statusu sygnału na anulowany
+ * @param {string} reason - Powód anulowania
+ * @returns {Promise<void>}
+ */
+SignalSchema.methods.markAsCanceled = async function (reason) {
+  this.status = "canceled";
+  this.metadata.cancelReason = reason;
+  await this.save();
+};
 
 // Eksportuj model
 const Signal = mongoose.model("Signal", SignalSchema);

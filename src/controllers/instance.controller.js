@@ -11,6 +11,7 @@ const instanceService = require("../services/instance.service");
 const signalService = require("../services/signal.service");
 const logger = require("../utils/logger");
 const { v4: uuidv4 } = require("uuid");
+const { validateInstanceParams } = require("../config/instance.config");
 
 /**
  * Pobiera wszystkie instancje
@@ -367,18 +368,8 @@ const updateInstanceConfig = async (req, res) => {
     const { instanceId } = req.params;
     const configData = req.body;
 
-    // Przygotuj dane do aktualizacji
-    const updateData = {
-      strategy: {
-        parameters: configData,
-      },
-    };
-
-    // Aktualizuj instancję
-    const instance = await instanceService.updateInstance(
-      instanceId,
-      updateData
-    );
+    // Pobierz instancję
+    const instance = await instanceService.getInstance(instanceId);
 
     if (!instance) {
       return res.status(404).json({
@@ -387,11 +378,75 @@ const updateInstanceConfig = async (req, res) => {
       });
     }
 
+    // Waliduj parametry konfiguracji
+    const validation = validateInstanceParams(configData);
+
+    if (!validation.isValid) {
+      return res.status(400).json({
+        error: "Validation Error",
+        message: "Invalid configuration parameters",
+        details: validation.errors,
+      });
+    }
+
+    // Przygotuj dane do aktualizacji
+    const updateData = {
+      strategy: {
+        parameters: {},
+      },
+    };
+
+    // Dodaj parametry kanału Hursta
+    if (configData.hurst) {
+      updateData.strategy.parameters.hurst = {
+        ...instance.strategy.parameters.hurst,
+        ...configData.hurst,
+      };
+    }
+
+    // Dodaj parametry EMA
+    if (configData.ema) {
+      updateData.strategy.parameters.ema = {
+        ...instance.strategy.parameters.ema,
+        ...configData.ema,
+      };
+    }
+
+    // Dodaj parametry sygnałów
+    if (configData.signals) {
+      updateData.strategy.parameters.signals = {
+        ...instance.strategy.parameters.signals,
+        ...configData.signals,
+      };
+    }
+
+    // Dodaj parametry alokacji kapitału
+    if (configData.capitalAllocation) {
+      updateData.strategy.parameters.capitalAllocation = {
+        ...instance.strategy.parameters.capitalAllocation,
+        ...configData.capitalAllocation,
+      };
+    }
+
+    // Dodaj parametry interwałów
+    if (configData.intervals) {
+      updateData.strategy.parameters.intervals = {
+        ...instance.strategy.parameters.intervals,
+        ...configData.intervals,
+      };
+    }
+
+    // Aktualizuj instancję
+    const updatedInstance = await instanceService.updateInstance(
+      instanceId,
+      updateData
+    );
+
     res.json({
       message: "Instance configuration updated successfully",
       config: {
         instanceId,
-        strategy: instance.strategy,
+        strategy: updatedInstance.strategy,
       },
     });
   } catch (error) {

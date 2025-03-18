@@ -11,9 +11,11 @@ const config = {
   // Domyślne parametry strategii Hursta
   hurst: {
     // Liczba okresów do analizy
-    periods: 25,
-    // Współczynnik odchylenia standardowego dla band
-    deviationFactor: 2.0,
+    periods: 30,
+    // Współczynnik odchylenia standardowego dla górnej bandy
+    upperDeviationFactor: 1.6,
+    // Współczynnik odchylenia standardowego dla dolnej bandy
+    lowerDeviationFactor: 1.8,
     // Minimalna wartość wykładnika Hursta do uznania trendu
     minExponent: 0.55,
   },
@@ -54,7 +56,11 @@ const config = {
         min: 10,
         max: 100,
       },
-      deviationFactor: {
+      upperDeviationFactor: {
+        min: 0.5,
+        max: 5.0,
+      },
+      lowerDeviationFactor: {
         min: 0.5,
         max: 5.0,
       },
@@ -64,6 +70,26 @@ const config = {
       periods: {
         min: 5,
         max: 200,
+      },
+    },
+    // Limity dla minimalnego odstępu czasowego między wejściami
+    minEntryTimeGap: {
+      min: 5 * 60 * 1000, // 5 minut
+      max: 24 * 60 * 60 * 1000, // 24 godziny
+    },
+    // Limity alokacji kapitału
+    capitalAllocation: {
+      firstEntry: {
+        min: 0.01, // 1%
+        max: 0.5, // 50%
+      },
+      secondEntry: {
+        min: 0.01, // 1%
+        max: 0.7, // 70%
+      },
+      thirdEntry: {
+        min: 0.01, // 1%
+        max: 0.9, // 90%
       },
     },
   },
@@ -96,14 +122,26 @@ const validateInstanceParams = (params) => {
       }
     }
 
-    if (params.hurst.deviationFactor !== undefined) {
-      const { min, max } = config.limits.hurst.deviationFactor;
+    if (params.hurst.upperDeviationFactor !== undefined) {
+      const { min, max } = config.limits.hurst.upperDeviationFactor;
       if (
-        params.hurst.deviationFactor < min ||
-        params.hurst.deviationFactor > max
+        params.hurst.upperDeviationFactor < min ||
+        params.hurst.upperDeviationFactor > max
       ) {
         errors.push(
-          `Współczynnik odchylenia dla kanału Hursta musi być z zakresu ${min}-${max}`
+          `Współczynnik odchylenia górnej bandy Hursta musi być z zakresu ${min}-${max}`
+        );
+      }
+    }
+
+    if (params.hurst.lowerDeviationFactor !== undefined) {
+      const { min, max } = config.limits.hurst.lowerDeviationFactor;
+      if (
+        params.hurst.lowerDeviationFactor < min ||
+        params.hurst.lowerDeviationFactor > max
+      ) {
+        errors.push(
+          `Współczynnik odchylenia dolnej bandy Hursta musi być z zakresu ${min}-${max}`
         );
       }
     }
@@ -115,6 +153,58 @@ const validateInstanceParams = (params) => {
       const { min, max } = config.limits.ema.periods;
       if (params.ema.periods < min || params.ema.periods > max) {
         errors.push(`Liczba okresów dla EMA musi być z zakresu ${min}-${max}`);
+      }
+    }
+  }
+
+  // Walidacja minimalnego odstępu czasowego
+  if (params.signals && params.signals.minEntryTimeGap !== undefined) {
+    const { min, max } = config.limits.minEntryTimeGap;
+    if (
+      params.signals.minEntryTimeGap < min ||
+      params.signals.minEntryTimeGap > max
+    ) {
+      errors.push(
+        `Minimalny odstęp czasowy musi być z zakresu ${min / (60 * 1000)}-${max / (60 * 1000)} minut`
+      );
+    }
+  }
+
+  // Walidacja alokacji kapitału
+  if (params.capitalAllocation) {
+    if (params.capitalAllocation.firstEntry !== undefined) {
+      const { min, max } = config.limits.capitalAllocation.firstEntry;
+      if (
+        params.capitalAllocation.firstEntry < min ||
+        params.capitalAllocation.firstEntry > max
+      ) {
+        errors.push(
+          `Alokacja dla pierwszego wejścia musi być z zakresu ${min * 100}%-${max * 100}%`
+        );
+      }
+    }
+
+    if (params.capitalAllocation.secondEntry !== undefined) {
+      const { min, max } = config.limits.capitalAllocation.secondEntry;
+      if (
+        params.capitalAllocation.secondEntry < min ||
+        params.capitalAllocation.secondEntry > max
+      ) {
+        errors.push(
+          `Alokacja dla drugiego wejścia musi być z zakresu ${min * 100}%-${max * 100}%`
+        );
+      }
+    }
+
+    if (params.capitalAllocation.thirdEntry !== undefined) {
+      const { min, max } = config.limits.capitalAllocation.thirdEntry;
+      if (
+        params.capitalAllocation.thirdEntry < min ||
+        params.capitalAllocation.thirdEntry > max
+      ) {
+        errors.push(
+          `Alokacja dla trzeciego wejścia musi być z zakresu ${min * 100}%-${max * 100}%`
+        );
       }
     }
   }
