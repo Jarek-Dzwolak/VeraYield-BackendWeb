@@ -109,7 +109,7 @@ const getCurrentPrice = async (req, res) => {
 const getHistoricalCandles = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const { interval = "1h", limit = 100 } = req.query;
+    const { interval = "1h", limit = 1000 } = req.query;
 
     // Waliduj parametry
     if (!isValidSymbol(symbol)) {
@@ -158,8 +158,7 @@ const getHistoricalCandles = async (req, res) => {
 const getHistoricalCandlesByInterval = async (req, res) => {
   try {
     const { symbol, interval } = req.params;
-    const { limit = 100, startTime, endTime } = req.query;
-
+    const { limit = 1000, startTime, endTime } = req.query;
     // Waliduj parametry
     if (!isValidSymbol(symbol)) {
       return res.status(400).json({

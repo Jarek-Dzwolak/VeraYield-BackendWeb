@@ -57,12 +57,16 @@ class InstanceService {
         throw new Error(`Instancja o ID ${instanceId} już istnieje`);
       }
 
+      // Sprawdź, czy jest to tryb testowy
+      const isTestMode = config.testMode === true;
+
       // Utwórz nową instancję w bazie danych
       const instance = new Instance({
         instanceId,
         name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
         symbol: config.symbol,
         active: config.active !== false,
+        testMode: isTestMode, // Dodajemy flagę trybu testowego
         strategy: {
           type: config.strategy?.type || "hurst",
           parameters: {
@@ -79,6 +83,27 @@ class InstanceService {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+
+      // Dla trybu testowego dodajemy przykładowe dane API i finansowe
+      if (isTestMode) {
+        // Dodaj przykładowe klucze API dla trybu testowego
+        instance.apiKeys = {
+          apiKey: "test_api_key",
+          apiSecret: "test_api_secret",
+        };
+
+        // Dodaj przykładowe dane finansowe dla trybu testowego
+        instance.financials = {
+          allocatedCapital: 1000,
+          currentBalance: 1000,
+          availableBalance: 1000,
+          lockedBalance: 0,
+          totalProfit: 0,
+          userId: "000000000000000000000000", // Fikcyjny ID użytkownika
+          openPositions: [],
+          closedPositions: [],
+        };
+      }
 
       await instance.save();
 

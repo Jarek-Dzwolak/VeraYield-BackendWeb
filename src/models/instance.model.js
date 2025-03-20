@@ -26,15 +26,15 @@ const InstanceSchema = new Schema({
     uppercase: true,
   },
 
-  // Klucze API dla tej instancji
+  // Klucze API dla tej instancji - dodane optional: true dla trybu testowego
   apiKeys: {
     apiKey: {
       type: String,
-      required: true,
+      // ZMIANA: Usunięto required: true
     },
     apiSecret: {
       type: String,
-      required: true,
+      // ZMIANA: Usunięto required: true
     },
   },
 
@@ -156,7 +156,7 @@ const InstanceSchema = new Schema({
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      // ZMIANA: Usunięto required: true
     },
     // Aktywne pozycje
     openPositions: [
@@ -229,6 +229,12 @@ const InstanceSchema = new Schema({
   updatedAt: {
     type: Date,
     default: Date.now,
+  },
+
+  // DODANO: Flaga trybu testowego
+  testMode: {
+    type: Boolean,
+    default: false,
   },
 });
 
