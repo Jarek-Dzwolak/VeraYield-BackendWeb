@@ -19,152 +19,138 @@ const InstanceSchema = new Schema({
     unique: true,
     trim: true,
   },
-
-  active: {
-    type: Boolean,
-    default: true,
-  },
-
   symbol: {
     type: String,
     required: true,
     trim: true,
     uppercase: true,
   },
-
-  // Klucze API dla tej instancji - dodane optional: true dla trybu testowego
-  apiKeys: {
-    apiKey: {
+  active: {
+    type: Boolean,
+    default: true,
+  },
+  // Ujednolicona struktura strategii
+  strategy: {
+    type: {
       type: String,
-      // ZMIANA: Usunięto required: true
+      enum: ["hurst", "macd", "rsi", "custom"],
+      default: "hurst",
     },
-    apiSecret: {
-      type: String,
-      // ZMIANA: Usunięto required: true
+    parameters: {
+      // Parametry kanału Hursta
+      hurst: {
+        interval: {
+          type: String,
+          enum: [
+            "1m",
+            "3m",
+            "5m",
+            "15m",
+            "30m",
+            "1h",
+            "2h",
+            "4h",
+            "6h",
+            "8h",
+            "12h",
+            "1d",
+          ],
+          default: "15m",
+        },
+        periods: {
+          type: Number,
+          default: 25,
+          min: 10,
+          max: 100,
+        },
+        upperDeviationFactor: {
+          type: Number,
+          default: 2.0,
+        },
+        lowerDeviationFactor: {
+          type: Number,
+          default: 2.0,
+        },
+      },
+      // Parametry EMA
+      ema: {
+        interval: {
+          type: String,
+          enum: ["15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d"],
+          default: "1h",
+        },
+        periods: {
+          type: Number,
+          default: 30,
+          min: 5,
+          max: 200,
+        },
+      },
+      // Konfiguracja sygnałów
+      signals: {
+        checkEMATrend: {
+          type: Boolean,
+          default: true,
+        },
+        minEntryTimeGap: {
+          type: Number,
+          default: 7200000, // 2h w milisekundach
+        },
+      },
+      // Alokacja kapitału
+      capitalAllocation: {
+        firstEntry: {
+          type: Number,
+          default: 0.1,
+          min: 0.01,
+          max: 0.5,
+        },
+        secondEntry: {
+          type: Number,
+          default: 0.25,
+          min: 0.01,
+          max: 0.7,
+        },
+        thirdEntry: {
+          type: Number,
+          default: 0.5,
+          min: 0.01,
+          max: 0.9,
+        },
+      },
     },
   },
 
-  // Konfiguracja kanału Hursta
-  hurstConfig: {
-    interval: {
-      type: String,
-      enum: [
-        "1m",
-        "3m",
-        "5m",
-        "15m",
-        "30m",
-        "1h",
-        "2h",
-        "4h",
-        "6h",
-        "8h",
-        "12h",
-        "1d",
-      ],
-      default: "15m",
-    },
-    periods: {
-      type: Number,
-      default: 25,
-      min: 10,
-      max: 100,
-    },
-    // Dodatkowe parametry specyficzne dla kanału Hursta
-    multiplier: {
-      type: Number,
-      default: 2.0,
-    },
-  },
-
-  // Konfiguracja linii trendu / EMA
-  trendConfig: {
-    interval: {
-      type: String,
-      enum: [
-        "1m",
-        "3m",
-        "5m",
-        "15m",
-        "30m",
-        "1h",
-        "2h",
-        "4h",
-        "6h",
-        "8h",
-        "12h",
-        "1d",
-      ],
-      default: "1h",
-    },
-    emaPeriods: {
-      type: Number,
-      default: 30,
-      min: 5,
-      max: 200,
-    },
-    historicalPeriods: {
-      type: Number,
-      default: 100,
-      min: 20,
-      max: 500,
-    },
-  },
-
-  // Sygnały handlowe
-  signalConfig: {
-    enableHurstSignals: {
-      type: Boolean,
-      default: true,
-    },
-    enableTrendSignals: {
-      type: Boolean,
-      default: true,
-    },
-    minimumConfirmationTime: {
-      type: Number,
-      default: 0, // W milisekundach, 0 oznacza natychmiastowe potwierdzenie
-    },
-  },
-
-  // Finansowe dane instancji
+  // Dane finansowe (bez zmian)
   financials: {
-    // Przydzielony kapitał dla instancji
     allocatedCapital: {
       type: Number,
       default: 0,
       min: 0,
     },
-    // Aktualny saldo instancji (dostępne + zablokowane w pozycjach)
     currentBalance: {
       type: Number,
       default: 0,
       min: 0,
     },
-    // Dostępne saldo (nie wykorzystane w pozycjach)
     availableBalance: {
       type: Number,
       default: 0,
       min: 0,
     },
-    // Zablokowane saldo (aktualnie w pozycjach)
     lockedBalance: {
       type: Number,
       default: 0,
       min: 0,
     },
-    // Całkowity zysk instancji
     totalProfit: {
       type: Number,
       default: 0,
     },
-    // Referencja do właściciela
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
-      // ZMIANA: Usunięto required: true
     },
-    // Aktywne pozycje
     openPositions: [
       {
         signalId: {
@@ -181,7 +167,6 @@ const InstanceSchema = new Schema({
         },
       },
     ],
-    // Historia zamkniętych pozycji
     closedPositions: [
       {
         entrySignalId: {
@@ -212,7 +197,7 @@ const InstanceSchema = new Schema({
     ],
   },
 
-  // Statystyki i metryki
+  // Statystyki
   stats: {
     totalSignals: {
       type: Number,
@@ -231,36 +216,29 @@ const InstanceSchema = new Schema({
     type: Date,
     default: Date.now,
   },
-
   updatedAt: {
     type: Date,
     default: Date.now,
   },
-
-  // DODANO: Flaga trybu testowego
   testMode: {
     type: Boolean,
     default: false,
   },
 });
 
-// Pre-save hook do aktualizacji pola updatedAt
+// Metoda do uzyskania identyfikatora
+InstanceSchema.methods.getInstanceId = function () {
+  return this.instanceId;
+};
+
+// Pre-save hook do generowania instanceId i aktualizacji updatedAt
 InstanceSchema.pre("save", function (next) {
+  if (!this.instanceId) {
+    this.instanceId = this._id.toString();
+  }
   this.updatedAt = Date.now();
   next();
 });
-
-// Metoda do sprawdzenia czy instancja ma aktywne połączenie WebSocket
-InstanceSchema.methods.hasActiveWebSocket = function () {
-  // Implementacja w serwisie
-  return true;
-};
-
-// Metoda do uzyskania identyfikatora używanego w innych modelach
-InstanceSchema.methods.getInstanceId = function () {
-  return this.instanceId || this._id.toString();
-};
-
 /**
  * Metoda - aktualizacja bilansu instancji
  * @param {Object} balanceUpdate - Dane do aktualizacji bilansu

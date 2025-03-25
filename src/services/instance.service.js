@@ -61,29 +61,41 @@ class InstanceService {
       const isTestMode = config.testMode === true;
 
       // Utwórz nową instancję w bazie danych
+      // Utwórz nową instancję w bazie danych
       const instance = new Instance({
         instanceId,
         name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
         symbol: config.symbol,
         active: config.active !== false,
-        testMode: isTestMode, // Dodajemy flagę trybu testowego
+        testMode: isTestMode,
         strategy: {
           type: config.strategy?.type || "hurst",
           parameters: {
             hurst: config.strategy?.parameters?.hurst || {
+              interval: "15m",
               periods: 25,
-              deviationFactor: 2.0,
+              upperDeviationFactor: 2.0,
+              lowerDeviationFactor: 2.0,
             },
             ema: config.strategy?.parameters?.ema || {
+              interval: "1h",
               periods: 30,
             },
-            checkEMATrend: config.strategy?.parameters?.checkEMATrend || true,
+            signals: config.strategy?.parameters?.signals || {
+              checkEMATrend: true,
+              minEntryTimeGap: 7200000,
+            },
+            capitalAllocation: config.strategy?.parameters
+              ?.capitalAllocation || {
+              firstEntry: 0.1,
+              secondEntry: 0.25,
+              thirdEntry: 0.5,
+            },
           },
         },
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-
       // Dla trybu testowego dodajemy przykładowe dane API i finansowe
       if (isTestMode) {
         // Dodaj przykładowe klucze API dla trybu testowego
@@ -145,7 +157,7 @@ class InstanceService {
         symbol: instance.symbol,
         hurst: instance.strategy.parameters.hurst,
         ema: instance.strategy.parameters.ema,
-        checkEMATrend: instance.strategy.parameters.checkEMATrend,
+        checkEMATrend: instance.strategy.parameters.signals.checkEMATrend,
       };
 
       // Uruchom analizę dla instancji

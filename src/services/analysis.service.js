@@ -125,12 +125,20 @@ class AnalysisService extends EventEmitter {
       );
 
       // Inicjalizuj wskaźniki
-      const hurstConfig = config.hurst || { periods: 25, deviationFactor: 2.0 };
-      const emaConfig = config.ema || { periods: 30 };
+      const hurstConfig = config.hurst || {
+        interval: "15m",
+        periods: 25,
+        upperDeviationFactor: 2.0,
+        lowerDeviationFactor: 2.0,
+      };
+
+      const emaConfig = config.ema || {
+        interval: "1h",
+        periods: 30,
+      };
 
       const hurstChannel = new HurstChannel(hurstConfig);
       const ema = new ExponentialMovingAverage(emaConfig);
-
       // Zapisz konfigurację i wskaźniki
       this.instances.set(instanceId, config);
       this.indicators.set(instanceId, { hurstChannel, ema });
