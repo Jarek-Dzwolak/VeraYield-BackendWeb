@@ -1,9 +1,11 @@
 {
   "name": "verayield-backendweb",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Automatyczny system tradingowy analizujący rynek kryptowalut",
+  "main": "src/server.js",
   "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -43,5 +45,8 @@
     "nodemon": "^3.1.9",
     "prettier": "^3.5.3",
     "supertest": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=14"
   }
 }

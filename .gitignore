@@ -10,7 +10,7 @@ package-lock.json
 .env.production.local
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -33,3 +33,13 @@ build/
 # Database backups
 *.dump
 *.bak
+
+# Dokumentacja projektu i osobiste notatki
+CloudAi.md
+RoutingAplikacji.txt
+updated-structure.txt
+
+# Konfiguracja i wrażliwe dane
+*_credentials.*
+*_secret.*
+keys/
