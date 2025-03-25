@@ -50,7 +50,7 @@ class SignalService extends EventEmitter {
       const currentPosition = this.activePositions.get(instanceId);
 
       // Pobierz instancję, aby uzyskać dostęp do informacji o finansach
-      const instance = await Instance.findById(instanceId);
+      const instance = await Instance.findOne({ instanceId });
 
       if (!instance) {
         logger.error(`Nie znaleziono instancji ${instanceId}`);

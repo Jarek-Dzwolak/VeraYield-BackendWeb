@@ -394,9 +394,9 @@ class BinanceService extends EventEmitter {
     });
 
     // Upewnij się, że jesteśmy podłączeni do odpowiedniego kanału Binance
-    const wsKey = `${symbol.toLowerCase()}-${interval}-frontend`;
+    const wsKey = `${symbol.toLowerCase()}-${interval}-client-${clientId}`;
     if (!this.wsConnections.has(wsKey)) {
-      this.subscribeToKlines(symbol, interval, "frontend");
+      this.subscribeToKlines(symbol, interval, `client-${clientId}`);
     }
 
     // Wyślij początkowe dane historyczne
@@ -467,7 +467,7 @@ class BinanceService extends EventEmitter {
 
     // Jeśli nikt już nie korzysta z tego kanału, zamknij połączenie
     if (!hasActiveSubscriptions) {
-      this.unsubscribeFromKlines(symbol, interval, "frontend");
+      this.unsubscribeFromKlines(symbol, interval, `client-${clientId}`);
     }
   }
 

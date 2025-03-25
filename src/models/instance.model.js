@@ -7,6 +7,12 @@ const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
 const InstanceSchema = new Schema({
+  instanceId: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true,
+  },
   name: {
     type: String,
     required: true,
@@ -252,7 +258,7 @@ InstanceSchema.methods.hasActiveWebSocket = function () {
 
 // Metoda do uzyskania identyfikatora używanego w innych modelach
 InstanceSchema.methods.getInstanceId = function () {
-  return this._id;
+  return this.instanceId || this._id.toString();
 };
 
 /**
