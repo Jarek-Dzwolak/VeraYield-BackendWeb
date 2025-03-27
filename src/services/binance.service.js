@@ -33,16 +33,26 @@ class BinanceService extends EventEmitter {
    * @param {number} limit - Liczba świec do pobrania
    * @returns {Promise<Array>} - Tablica danych świecowych
    */
-  async getHistoricalCandles(symbol, interval, limit = 100) {
+  async getHistoricalCandles(
+    symbol,
+    interval,
+    limit = 100,
+    startTime,
+    endTime
+  ) {
     try {
       const url = `${BINANCE_API_BASE_URL}/api/v3/klines`;
-      const response = await axios.get(url, {
-        params: {
-          symbol: symbol.toUpperCase(),
-          interval,
-          limit,
-        },
-      });
+      const params = {
+        symbol: symbol.toUpperCase(),
+        interval,
+        limit,
+      };
+
+      // Dodaj startTime i endTime do parametrów
+      if (startTime) params.startTime = startTime;
+      if (endTime) params.endTime = endTime;
+
+      const response = await axios.get(url, { params });
 
       const candles = response.data.map((candle) => ({
         openTime: candle[0],
