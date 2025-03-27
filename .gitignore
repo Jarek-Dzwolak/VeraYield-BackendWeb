@@ -43,6 +43,9 @@ updated-structure.txt
 *_credentials.*
 *_secret.*
 keys/
-# Wszystkie warianty plików .env
-.env*
+# Blokuj prawdziwe pliki ze zmiennymi środowiskowymi
+.env
+.env.*
+
+# Ale pozwól na plik przykładowy
 !.env.example
