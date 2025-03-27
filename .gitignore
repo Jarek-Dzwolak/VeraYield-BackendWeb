@@ -43,3 +43,6 @@ updated-structure.txt
 *_credentials.*
 *_secret.*
 keys/
+# Wszystkie warianty plików .env
+.env*
+!.env.example
