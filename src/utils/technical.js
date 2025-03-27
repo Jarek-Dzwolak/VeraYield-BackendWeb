@@ -103,12 +103,14 @@ class HurstChannel {
    * Tworzy nowy kanał Hursta
    * @param {Object} options - Opcje konfiguracyjne
    * @param {number} options.periods - Liczba okresów do analizy (domyślnie: 25)
-   * @param {number} options.deviationFactor - Współczynnik odchylenia standardowego (domyślnie: 2.0)
+   * @param {number} options.upperDeviationFactor - Współczynnik odchylenia dla górnej bandy (domyślnie: 2.0)
+   * @param {number} options.lowerDeviationFactor - Współczynnik odchylenia dla dolnej bandy (domyślnie: 2.0)
    */
   constructor(options = {}) {
     this.options = {
       periods: 25,
-      deviationFactor: 2.0,
+      upperDeviationFactor: 2.0,
+      lowerDeviationFactor: 2.0,
       ...options,
     };
   }
@@ -147,8 +149,9 @@ class HurstChannel {
       const stdDev = this._calculateStandardDeviation(closePrices, mean);
 
       // Oblicz górną i dolną bandę kanału Hursta
-      const upperBand = mean + this.options.deviationFactor * stdDev;
-      const lowerBand = mean - this.options.deviationFactor * stdDev;
+      // Użyj odrębnych wartości dla górnej i dolnej bandy
+      const upperBand = mean + this.options.upperDeviationFactor * stdDev;
+      const lowerBand = mean - this.options.lowerDeviationFactor * stdDev;
 
       // Oblicz nachylenie kanału (trend)
       const trend = this._calculateTrend(relevantCandles);
@@ -382,6 +385,86 @@ class CrossDetector {
     }
 
     return null;
+  }
+
+  /**
+   * Wykrywa dotknięcie dolnej bandy kanału Hursta (używane dla sygnałów wejścia)
+   * @param {number} currentLow - Najniższa cena bieżącej świecy
+   * @param {number} currentHigh - Najwyższa cena bieżącej świecy
+   * @param {number} lowerBand - Poziom dolnej bandy
+   * @param {number} previousLow - Najniższa cena poprzedniej świecy (opcjonalnie)
+   * @param {number} touchTolerance - Tolerancja dotknięcia (opcjonalnie, domyślnie 0.05%)
+   * @returns {boolean} - Czy nastąpiło dotknięcie dolnej bandy
+   */
+  static detectLowerBandTouch(
+    currentLow,
+    currentHigh,
+    lowerBand,
+    previousLow = null,
+    touchTolerance = 0.0005
+  ) {
+    // Oblicz dolną bandę z tolerancją
+    const lowerBandWithTolerance = lowerBand * (1 + touchTolerance);
+
+    // Sprawdź, czy cena przecina dolną bandę (low jest poniżej, ale high jest powyżej)
+    const touchesLowerBand =
+      currentLow <= lowerBandWithTolerance && currentHigh >= lowerBand;
+
+    // Jeśli mamy dostępną poprzednią cenę, sprawdź, czy to nowe przecięcie
+    if (previousLow !== null && touchesLowerBand) {
+      // Sprawdź, czy poprzednia świeca nie przecięła już bandy,
+      // lub przecięła ją tylko trochę (z mniejszą tolerancją)
+      return (
+        previousLow > lowerBand ||
+        Math.abs(previousLow - lowerBand) < lowerBand * touchTolerance * 0.5
+      );
+    }
+
+    return touchesLowerBand;
+  }
+
+  /**
+   * Wykrywa przecięcie górnej bandy kanału Hursta w dół (używane dla sygnałów wyjścia)
+   * @param {number} currentLow - Najniższa cena bieżącej świecy
+   * @param {number} currentPrice - Cena zamknięcia bieżącej świecy
+   * @param {number} previousPrice - Cena zamknięcia poprzedniej świecy
+   * @param {number} upperBand - Poziom górnej bandy
+   * @returns {boolean} - Czy nastąpiło przecięcie górnej bandy w dół
+   */
+  static detectUpperBandCrossDown(
+    currentLow,
+    currentPrice,
+    previousPrice,
+    upperBand
+  ) {
+    // Sprawdź warunek z backtestingowej strategii:
+    // Low jest poniżej górnej bandy,
+    // cena zamknięcia jest poniżej górnej bandy,
+    // poprzednia cena zamknięcia była powyżej górnej bandy
+    return (
+      currentLow <= upperBand &&
+      currentPrice <= upperBand &&
+      previousPrice > upperBand
+    );
+  }
+
+  /**
+   * Sprawdza czy trailing stop został aktywowany
+   * @param {number} highestPrice - Najwyższa osiągnięta cena
+   * @param {number} currentPrice - Aktualna cena
+   * @param {number} trailingStopPercent - Procent trailing stopu (jako ułamek, np. 0.03 dla 3%)
+   * @returns {boolean} - Czy trailing stop został aktywowany
+   */
+  static isTrailingStopActivated(
+    highestPrice,
+    currentPrice,
+    trailingStopPercent
+  ) {
+    // Oblicz spadek od najwyższej ceny
+    const dropFromHigh = (highestPrice - currentPrice) / highestPrice;
+
+    // Sprawdź, czy spadek przekroczył trailing stop
+    return dropFromHigh >= trailingStopPercent;
   }
 
   /**

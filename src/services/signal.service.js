@@ -20,6 +20,7 @@ class SignalService extends EventEmitter {
     super();
     this.activePositions = new Map(); // Mapa aktywnych pozycji (instanceId -> positionData)
     this.positionHistory = new Map(); // Mapa historii pozycji (instanceId -> [positionData])
+    this.lastEntryTimes = new Map(); // Mapa czasów ostatniego wejścia (instanceId -> timestamp)
     this.setupListeners();
   }
 
@@ -44,12 +45,12 @@ class SignalService extends EventEmitter {
    */
   async processEntrySignal(signalData) {
     try {
-      const { instanceId, type, price, timestamp } = signalData;
+      const { instanceId, type, price, timestamp, trend } = signalData;
 
       // Pobierz bieżący stan pozycji dla instancji
       const currentPosition = this.activePositions.get(instanceId);
 
-      // Pobierz instancję, aby uzyskać dostęp do informacji o finansach
+      // Pobierz instancję, aby uzyskać dostęp do informacji o finansach i parametrach
       const instance = await Instance.findOne({ instanceId });
 
       if (!instance) {
@@ -65,12 +66,49 @@ class SignalService extends EventEmitter {
         return;
       }
 
+      // Pobierz parametry strategii
+      const strategyParams = instance.strategy.parameters;
+
+      // Pobierz parametry alokacji kapitału
+      const firstEntryPercent =
+        strategyParams.capitalAllocation?.firstEntry || 0.1; // 10%
+      const secondEntryPercent =
+        strategyParams.capitalAllocation?.secondEntry || 0.25; // 25%
+      const thirdEntryPercent =
+        strategyParams.capitalAllocation?.thirdEntry || 0.5; // 50%
+
+      // Pobierz minimalny odstęp czasowy między wejściami (domyślnie 2 godziny)
+      const minEntryTimeGap =
+        strategyParams.signals?.minEntryTimeGap || 7200000; // 2h w ms
+
       // Jeśli nie mamy aktywnej pozycji, to jest to pierwsze wejście
       if (!currentPosition) {
-        // Określ kwotę alokacji (10% dostępnych środków)
-        const allocationPercent = 0.1;
+        // Sprawdź, czy trend pozwala na wejście (jeśli włączone filtrowanie trendu)
+        const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
+
+        if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
+          logger.info(
+            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
+          );
+
+          // Zapisz informację o odrzuconym sygnale w DB (opcjonalnie)
+          await this.createSignalInDatabase({
+            instanceId,
+            symbol: instance.symbol,
+            type: "entry-rejected",
+            subType: "trend-filter",
+            price,
+            timestamp,
+            status: "canceled",
+            metadata: { trend },
+          });
+
+          return;
+        }
+
+        // Określ kwotę alokacji (pierwszy entry)
         const allocationAmount =
-          instance.financials.availableBalance * allocationPercent;
+          instance.financials.availableBalance * firstEntryPercent;
 
         // Utwórz nowy sygnał w bazie danych
         const signal = await this.createSignalInDatabase({
@@ -79,10 +117,11 @@ class SignalService extends EventEmitter {
           type: "entry",
           subType: "first",
           price,
-          allocation: allocationPercent,
+          allocation: firstEntryPercent,
           amount: allocationAmount,
           timestamp,
           status: "pending", // Przed wykonaniem przez AccountService
+          metadata: { trend },
         });
 
         // Zablokuj środki na pozycję
@@ -100,7 +139,7 @@ class SignalService extends EventEmitter {
             entryTime: timestamp,
             entryPrice: price,
             entryType: "first",
-            capitalAllocation: allocationPercent,
+            capitalAllocation: firstEntryPercent,
             capitalAmount: allocationAmount,
             signalId: signal._id,
             status: "active",
@@ -109,7 +148,8 @@ class SignalService extends EventEmitter {
                 time: timestamp,
                 price,
                 type,
-                allocation: allocationPercent,
+                trend,
+                allocation: firstEntryPercent,
                 amount: allocationAmount,
                 signalId: signal._id,
               },
@@ -120,11 +160,14 @@ class SignalService extends EventEmitter {
           // Zapisz pozycję
           this.activePositions.set(instanceId, newPosition);
 
+          // Zapisz czas ostatniego wejścia
+          this.lastEntryTimes.set(instanceId, timestamp);
+
           // Emituj zdarzenie
           this.emit("newPosition", newPosition);
 
           logger.info(
-            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${allocationAmount}`
+            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${allocationAmount}, trend: ${trend}`
           );
         } catch (error) {
           logger.error(
@@ -154,13 +197,35 @@ class SignalService extends EventEmitter {
         }
 
         // Sprawdź minimalny odstęp czasowy od poprzedniego wejścia
-        const lastEntryTime = currentPosition.entries[entryCount - 1].time;
-        const minTimeGap = 2 * 60 * 60 * 1000; // 2 godziny w milisekundach
+        const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
 
-        if (timestamp - lastEntryTime < minTimeGap) {
+        if (timestamp - lastEntryTime < minEntryTimeGap) {
           logger.info(
-            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - za mały odstęp czasowy`
+            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - za mały odstęp czasowy (${((timestamp - lastEntryTime) / 60000).toFixed(1)} min < ${minEntryTimeGap / 60000} min)`
           );
+          return;
+        }
+
+        // Sprawdź, czy trend pozwala na wejście (jeśli włączone filtrowanie trendu)
+        const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
+
+        if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
+          logger.info(
+            `Ignorowanie sygnału kolejnego wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
+          );
+
+          // Zapisz informację o odrzuconym sygnale w DB (opcjonalnie)
+          await this.createSignalInDatabase({
+            instanceId,
+            symbol: instance.symbol,
+            type: "entry-rejected",
+            subType: `trend-filter-${entryCount + 1}`,
+            price,
+            timestamp,
+            status: "canceled",
+            metadata: { trend },
+          });
+
           return;
         }
 
@@ -169,12 +234,12 @@ class SignalService extends EventEmitter {
         let entryType = "";
 
         if (entryCount === 1) {
-          // Drugie wejście: 25% kapitału
-          allocationPercent = 0.25;
+          // Drugie wejście
+          allocationPercent = secondEntryPercent;
           entryType = "second";
         } else if (entryCount === 2) {
-          // Trzecie wejście: 50% kapitału
-          allocationPercent = 0.5;
+          // Trzecie wejście
+          allocationPercent = thirdEntryPercent;
           entryType = "third";
         }
 
@@ -193,6 +258,7 @@ class SignalService extends EventEmitter {
           amount: allocationAmount,
           timestamp,
           status: "pending",
+          metadata: { trend },
         });
 
         // Zablokuj środki na pozycję
@@ -208,6 +274,7 @@ class SignalService extends EventEmitter {
             time: timestamp,
             price,
             type,
+            trend,
             allocation: allocationPercent,
             amount: allocationAmount,
             signalId: signal._id,
@@ -218,11 +285,14 @@ class SignalService extends EventEmitter {
           currentPosition.capitalAmount =
             (currentPosition.capitalAmount || 0) + allocationAmount;
 
+          // Zapisz czas ostatniego wejścia
+          this.lastEntryTimes.set(instanceId, timestamp);
+
           // Emituj zdarzenie
           this.emit("positionUpdated", currentPosition);
 
           logger.info(
-            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${allocationPercent * 100}%, kwota: ${allocationAmount})`
+            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${allocationPercent * 100}%, kwota: ${allocationAmount}, trend: ${trend})`
           );
         } catch (error) {
           logger.error(
@@ -243,6 +313,20 @@ class SignalService extends EventEmitter {
         `Błąd podczas przetwarzania sygnału wejścia: ${error.message}`
       );
     }
+  }
+
+  /**
+   * Sprawdza, czy trend jest odpowiedni do wejścia (zgodnie z logiką backtestingową)
+   * @param {string} trend - Trend z określenia trendu w analysisService
+   * @returns {boolean} - Czy trend pozwala na wejście
+   * @private
+   */
+  _isTrendValidForEntry(trend) {
+    // Zgodnie z backtestingową logiką, dozwolone trendy to:
+    // - "up" (wzrostowy)
+    // - "strong_up" (silnie wzrostowy)
+    // - "neutral" (neutralny)
+    return ["up", "strong_up", "neutral"].includes(trend);
   }
 
   /**
@@ -283,13 +367,25 @@ class SignalService extends EventEmitter {
         instanceId,
         symbol: currentPosition.symbol,
         type: "exit",
-        subType: type,
+        subType: type, // "upperBandCrossDown" lub "trailingStop"
         price,
         profitPercent,
         exitAmount,
         profit,
         timestamp,
         status: "pending",
+        metadata: {
+          entryAvgPrice,
+          totalEntryAmount,
+          // Dla trailing stopu dodaj dodatkowe informacje
+          ...(type === "trailingStop" && signalData.highestPrice
+            ? {
+                highestPrice: signalData.highestPrice,
+                dropPercent: signalData.dropPercent,
+                trailingStopPercent: signalData.trailingStopPercent,
+              }
+            : {}),
+        },
       });
 
       try {
@@ -322,11 +418,14 @@ class SignalService extends EventEmitter {
         // Usuń z aktywnych pozycji
         this.activePositions.delete(instanceId);
 
+        // Resetuj czas ostatniego wejścia
+        this.lastEntryTimes.delete(instanceId);
+
         // Emituj zdarzenie
         this.emit("positionClosed", currentPosition);
 
         logger.info(
-          `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)})`
+          `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)}, typ: ${type})`
         );
       } catch (error) {
         logger.error(`Nie udało się sfinalizować pozycji: ${error.message}`);
@@ -498,6 +597,12 @@ class SignalService extends EventEmitter {
         }
       }
 
+      // Statystyki odrzuconych sygnałów (jeśli je zapisujemy)
+      const rejectedSignals = await Signal.find({
+        ...filters,
+        type: "entry-rejected",
+      }).count();
+
       return {
         totalTrades,
         profitableTrades,
@@ -508,6 +613,7 @@ class SignalService extends EventEmitter {
         maxProfitPercent: maxProfit,
         maxLossPercent: maxLoss,
         roi: totalAmount > 0 ? (totalProfit / totalAmount) * 100 : 0,
+        rejectedSignals: rejectedSignals || 0,
       };
     } catch (error) {
       logger.error(
@@ -529,6 +635,7 @@ class SignalService extends EventEmitter {
 
       // Usuń z lokalnych map
       this.positionHistory.delete(instanceId);
+      this.lastEntryTimes.delete(instanceId);
 
       logger.info(`Wyczyszczono historię sygnałów dla instancji ${instanceId}`);
       return result.deletedCount;

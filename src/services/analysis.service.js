@@ -22,6 +22,8 @@ class AnalysisService extends EventEmitter {
     this.instances = new Map(); // Mapa aktywnych instancji analizy (instanceId -> config)
     this.indicators = new Map(); // Mapa wskaźników (instanceId -> indicators)
     this.lastPrices = new Map(); // Mapa ostatnich cen (instanceId -> lastPrice)
+    this.highestPrices = new Map(); // Mapa najwyższych cen dla trailing stopu
+    this.extremumReached = new Map(); // Flaga czy osiągnięto ekstremum dla instancji
     this.setupListeners();
   }
 
@@ -55,6 +57,8 @@ class AnalysisService extends EventEmitter {
     binanceService.on("kline", (data) => {
       const { candle, instanceId } = data;
       const currentPrice = candle.close;
+      const currentHigh = candle.high;
+      const currentLow = candle.low;
 
       // Sprawdź, czy mamy poprzednią cenę
       if (!this.lastPrices.has(instanceId)) {
@@ -69,35 +73,66 @@ class AnalysisService extends EventEmitter {
         return;
       }
 
-      // Jeśli to świeca 15-minutowa, aktualizuj także kanał Hursta dla bieżących danych
-      if (candle.interval === "15m") {
+      // Jeśli to świeca 15-minutowa i jest zamknięta, aktualizuj kanał Hursta
+      if (candle.interval === "15m" && candle.isFinal) {
         const config = this.instances.get(instanceId);
         const candles15m = binanceService.getCachedCandles(
           config.symbol,
           "15m"
         );
 
-        // Aktualizuj kanał Hursta z najnowszymi danymi (również niezamkniętymi)
         if (candles15m && candles15m.length > 0) {
-          // Dodaj bieżącą świecę, jeśli nie jest już zawarta w danych
-          const lastCandle = candles15m[candles15m.length - 1];
-          if (lastCandle.openTime !== candle.openTime) {
-            const updatedCandles = [...candles15m, candle];
-            this.updateHurstChannel(instanceId, updatedCandles);
-          } else {
-            // Aktualizuj ostatnią świecę w danych
-            const updatedCandles = [...candles15m.slice(0, -1), candle];
-            this.updateHurstChannel(instanceId, updatedCandles);
-          }
+          this.updateHurstChannel(instanceId, candles15m);
         }
       }
 
+      // Jeśli to świeca 1-godzinna i jest zamknięta, aktualizuj EMA
+      if (candle.interval === "1h" && candle.isFinal) {
+        const config = this.instances.get(instanceId);
+        const candles1h = binanceService.getCachedCandles(config.symbol, "1h");
+
+        if (candles1h && candles1h.length > 0) {
+          this.updateEMA(instanceId, candles1h);
+        }
+      }
+
+      // Zaktualizuj najwyższą cenę dla trailing stopu
+      this.updateHighestPrice(instanceId, currentHigh);
+
       // Wykryj ewentualne sygnały
-      this.detectSignals(instanceId, previousPrice, currentPrice);
+      this.detectSignals(
+        instanceId,
+        previousPrice,
+        currentPrice,
+        currentHigh,
+        currentLow
+      );
 
       // Aktualizuj ostatnią cenę
       this.lastPrices.set(instanceId, currentPrice);
     });
+  }
+
+  /**
+   * Aktualizuje najwyższą cenę dla instancji (używane dla trailing stopu)
+   * @param {string} instanceId - Identyfikator instancji
+   * @param {number} currentHigh - Aktualna najwyższa cena
+   */
+  updateHighestPrice(instanceId, currentHigh) {
+    // Tylko aktualizuj, jeśli już mamy pozycję (flagę extremumReached)
+    if (
+      this.extremumReached.has(instanceId) &&
+      this.extremumReached.get(instanceId)
+    ) {
+      // Jeśli nie mamy jeszcze najwyższej ceny, inicjalizuj ją
+      if (!this.highestPrices.has(instanceId)) {
+        this.highestPrices.set(instanceId, currentHigh);
+      }
+      // Zaktualizuj tylko, jeśli nowa cena jest wyższa
+      else if (currentHigh > this.highestPrices.get(instanceId)) {
+        this.highestPrices.set(instanceId, currentHigh);
+      }
+    }
   }
 
   /**
@@ -139,9 +174,17 @@ class AnalysisService extends EventEmitter {
 
       const hurstChannel = new HurstChannel(hurstConfig);
       const ema = new ExponentialMovingAverage(emaConfig);
+      const shortEma = new ExponentialMovingAverage({
+        ...emaConfig,
+        periods: 5,
+      }); // EMA5 dla określania kierunku trendu
+
       // Zapisz konfigurację i wskaźniki
       this.instances.set(instanceId, config);
-      this.indicators.set(instanceId, { hurstChannel, ema });
+      this.indicators.set(instanceId, { hurstChannel, ema, shortEma });
+
+      // Inicjalizuj flagi dla trailing stopu
+      this.extremumReached.set(instanceId, false);
 
       // Oblicz początkowe wartości wskaźników
       this.updateInitialIndicators(instanceId);
@@ -226,26 +269,30 @@ class AnalysisService extends EventEmitter {
     try {
       // Pobierz wskaźniki dla instancji
       const indicators = this.indicators.get(instanceId);
-      if (!indicators || !indicators.ema) {
+      if (!indicators || !indicators.ema || !indicators.shortEma) {
         return;
       }
 
-      // Oblicz EMA
+      // Oblicz EMA długie (np. EMA30)
       const emaValue = indicators.ema.calculate(candles);
+      // Oblicz EMA krótkie (np. EMA5)
+      const shortEmaValue = indicators.shortEma.calculate(candles);
 
-      if (emaValue !== null) {
-        // Zapisz wynik
+      if (emaValue !== null && shortEmaValue !== null) {
+        // Zapisz wyniki
         indicators.emaValue = emaValue;
+        indicators.shortEmaValue = shortEmaValue;
 
         // Emituj zdarzenie aktualizacji
         this.emit("emaUpdated", {
           instanceId,
           value: emaValue,
+          shortValue: shortEmaValue,
           candle: candles[candles.length - 1],
         });
 
         logger.debug(
-          `Zaktualizowano EMA dla instancji ${instanceId} (EMA=${emaValue.toFixed(2)})`
+          `Zaktualizowano EMA dla instancji ${instanceId} (EMA=${emaValue.toFixed(2)}, EMA5=${shortEmaValue.toFixed(2)})`
         );
       }
     } catch (error) {
@@ -256,12 +303,56 @@ class AnalysisService extends EventEmitter {
   }
 
   /**
+   * Określa aktualny trend na podstawie EMA
+   * @param {number} currentPrice - Aktualna cena
+   * @param {number} emaValue - Wartość EMA długiej
+   * @param {number} shortEmaValue - Wartość EMA krótkiej
+   * @returns {string} - Kierunek i siła trendu: "strong_up", "up", "neutral", "down", "strong_down"
+   */
+  determineTrend(currentPrice, emaValue, shortEmaValue) {
+    if (!emaValue || !shortEmaValue) {
+      return "neutral";
+    }
+
+    // Określ kierunek trendu na podstawie krótkiej EMA względem długiej
+    const direction =
+      shortEmaValue > emaValue
+        ? "up"
+        : shortEmaValue < emaValue
+          ? "down"
+          : "neutral";
+
+    // Oblicz siłę trendu jako odległość ceny od długiej EMA
+    const trendStrength = Math.abs((currentPrice - emaValue) / emaValue) * 100;
+
+    // Zwróć odpowiedni trend na podstawie kierunku i siły
+    if (currentPrice > emaValue && direction === "up") {
+      // Trend wzrostowy
+      return trendStrength > 1.5 ? "strong_up" : "up";
+    } else if (currentPrice < emaValue && direction === "down") {
+      // Trend spadkowy
+      return trendStrength > 1.5 ? "strong_down" : "down";
+    } else {
+      // Trend neutralny lub mieszany
+      return "neutral";
+    }
+  }
+
+  /**
    * Wykrywa sygnały dla instancji na podstawie aktualnych cen i wskaźników
    * @param {string} instanceId - Identyfikator instancji
    * @param {number} previousPrice - Poprzednia cena
    * @param {number} currentPrice - Aktualna cena
+   * @param {number} currentHigh - Aktualna najwyższa cena
+   * @param {number} currentLow - Aktualna najniższa cena
    */
-  detectSignals(instanceId, previousPrice, currentPrice) {
+  detectSignals(
+    instanceId,
+    previousPrice,
+    currentPrice,
+    currentHigh,
+    currentLow
+  ) {
     try {
       // Pobierz wskaźniki dla instancji
       const indicators = this.indicators.get(instanceId);
@@ -269,23 +360,44 @@ class AnalysisService extends EventEmitter {
         return;
       }
 
-      const config = this.instances.get(instanceId);
       const hurstResult = indicators.hurstResult;
       const emaValue = indicators.emaValue;
+      const shortEmaValue = indicators.shortEmaValue;
+
+      // Określ aktualny trend z wyższego timeframe'u
+      const currentTrend = this.determineTrend(
+        currentPrice,
+        emaValue,
+        shortEmaValue
+      );
 
       // 1. Sprawdź dotknięcie dolnej bandy kanału Hursta (potencjalne wejście)
+      // Implementacja podobna do backtestingu - sprawdzamy przecięcie z góry na dół
       const lowerBandCross = CrossDetector.detectLevelCross(
         previousPrice,
-        currentPrice,
+        currentLow,
         hurstResult.lowerBand
       );
-      if (lowerBandCross && lowerBandCross.direction === "down") {
+
+      // Sprawdź, czy cena przecina dolną bandę (low jest poniżej, ale high jest powyżej)
+      let touchesLowerBand = false;
+      if (
+        currentLow <= hurstResult.lowerBand &&
+        currentHigh >= hurstResult.lowerBand
+      ) {
+        touchesLowerBand = true;
+      }
+
+      if (touchesLowerBand) {
         // Sprawdź warunek trendu z wyższego timeframe'u (EMA), jeśli wymagany
         let trendConditionMet = true;
+        const config = this.instances.get(instanceId);
+
         if (config.checkEMATrend && emaValue !== null) {
-          const trendDirection = currentPrice >= emaValue ? "up" : "down";
-          trendConditionMet =
-            trendDirection === "up" || trendDirection === "sideways";
+          // Dozwolone trendy: wzrostowy, silnie wzrostowy, neutralny
+          trendConditionMet = ["up", "strong_up", "neutral"].includes(
+            currentTrend
+          );
         }
 
         if (trendConditionMet) {
@@ -296,6 +408,8 @@ class AnalysisService extends EventEmitter {
             price: currentPrice,
             hurstChannel: hurstResult,
             emaValue,
+            shortEmaValue,
+            trend: currentTrend,
             timestamp: new Date().getTime(),
           });
 
@@ -305,13 +419,27 @@ class AnalysisService extends EventEmitter {
         }
       }
 
-      // 2. Sprawdź przecięcie górnej bandy kanału Hursta i powrót do kanału (potencjalne wyjście)
-      const upperBandCross = CrossDetector.detectLevelCross(
-        previousPrice,
-        currentPrice,
-        hurstResult.upperBand
-      );
-      if (upperBandCross && upperBandCross.direction === "down") {
+      // 2. Sprawdź przekroczenie górnej bandy kanału Hursta (trigger dla trailing stopu)
+      const upperBandBreak = currentHigh >= hurstResult.upperBand;
+      // Jeśli przekroczono górną bandę i nie ustawiono jeszcze flagi
+      if (upperBandBreak && !this.extremumReached.get(instanceId)) {
+        this.extremumReached.set(instanceId, true);
+        this.highestPrices.set(instanceId, currentHigh);
+
+        logger.debug(
+          `Osiągnięto górne ekstremum dla instancji ${instanceId}, aktywowano trailing stop (cena=${currentHigh})`
+        );
+      }
+
+      // 3. Sprawdź przecięcie górnej bandy i powrót do kanału (wyjście)
+      // Implementacja jak w backtestingu: cena spada poniżej górnej bandy po jej uprzednim przekroczeniu
+      const upperBandCrossDown =
+        currentLow <= hurstResult.upperBand &&
+        currentPrice <= hurstResult.upperBand &&
+        previousPrice > hurstResult.upperBand &&
+        this.extremumReached.get(instanceId);
+
+      if (upperBandCrossDown) {
         // Emituj sygnał wyjścia (po dotknięciu górnej bandy i powrocie)
         this.emit("exitSignal", {
           instanceId,
@@ -322,29 +450,57 @@ class AnalysisService extends EventEmitter {
           timestamp: new Date().getTime(),
         });
 
+        // Resetuj flagi trailing stopu
+        this.extremumReached.set(instanceId, false);
+        this.highestPrices.delete(instanceId);
+
         logger.info(
           `Wykryto sygnał wyjścia dla instancji ${instanceId} (przecięcie górnej bandy kanału Hursta w dół przy cenie ${currentPrice})`
         );
       }
 
-      // 3. Sprawdź przecięcie EMA (dodatkowy sygnał)
-      if (emaValue !== null) {
-        const emaCross = CrossDetector.detectLevelCross(
-          previousPrice,
-          currentPrice,
-          emaValue
-        );
-        if (emaCross) {
-          this.emit("emaCross", {
+      // 4. Sprawdź trailing stop (jeśli aktywny)
+      if (
+        this.extremumReached.get(instanceId) &&
+        this.highestPrices.has(instanceId)
+      ) {
+        const highestPrice = this.highestPrices.get(instanceId);
+
+        // Ustaw bazowy trailing stop
+        let trailingStopPercent = 0.03; // Domyślnie 3%
+
+        // Dynamicznie dostosuj trailing stop na podstawie trendu - jak w backtestingu
+        if (currentTrend === "strong_up") {
+          // W silnym trendzie wzrostowym daj większe pole manewru
+          trailingStopPercent = trailingStopPercent * 1.5;
+        } else if (currentTrend === "down" || currentTrend === "strong_down") {
+          // W trendzie spadkowym bądź bardziej restrykcyjny
+          trailingStopPercent = trailingStopPercent * 0.7;
+        }
+
+        // Oblicz spadek od najwyższej ceny (jako procent)
+        const dropFromHigh = (highestPrice - currentPrice) / highestPrice;
+
+        // Jeśli spadek przekroczył trailing stop, wygeneruj sygnał wyjścia
+        if (dropFromHigh >= trailingStopPercent) {
+          this.emit("exitSignal", {
             instanceId,
-            direction: emaCross.direction,
+            type: "trailingStop",
             price: currentPrice,
+            highestPrice,
+            dropPercent: dropFromHigh * 100,
+            trailingStopPercent: trailingStopPercent * 100,
+            hurstChannel: hurstResult,
             emaValue,
             timestamp: new Date().getTime(),
           });
 
-          logger.debug(
-            `Wykryto przecięcie EMA dla instancji ${instanceId} (kierunek: ${emaCross.direction}, cena: ${currentPrice})`
+          // Resetuj flagi trailing stopu
+          this.extremumReached.set(instanceId, false);
+          this.highestPrices.delete(instanceId);
+
+          logger.info(
+            `Wykryto sygnał wyjścia przez trailing stop dla instancji ${instanceId} (spadek ${(dropFromHigh * 100).toFixed(2)}% od najwyższej ceny ${highestPrice})`
           );
         }
       }
@@ -373,7 +529,10 @@ class AnalysisService extends EventEmitter {
       symbol: config.symbol,
       hurstChannel: indicators.hurstResult || null,
       emaValue: indicators.emaValue || null,
+      shortEmaValue: indicators.shortEmaValue || null,
       lastPrice: this.lastPrices.get(instanceId) || null,
+      isExtremumReached: this.extremumReached.get(instanceId) || false,
+      highestPrice: this.highestPrices.get(instanceId) || null,
       timestamp: new Date().getTime(),
     };
   }
@@ -409,6 +568,8 @@ class AnalysisService extends EventEmitter {
       this.instances.delete(instanceId);
       this.indicators.delete(instanceId);
       this.lastPrices.delete(instanceId);
+      this.extremumReached.delete(instanceId);
+      this.highestPrices.delete(instanceId);
 
       logger.info(`Zatrzymano analizę dla instancji ${instanceId}`);
       return true;
