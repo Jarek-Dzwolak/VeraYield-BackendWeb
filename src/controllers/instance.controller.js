@@ -97,7 +97,7 @@ const getInstance = async (req, res) => {
  */
 const createInstance = async (req, res) => {
   try {
-    const { symbol, name, strategy, active } = req.body;
+    const { symbol, name, strategy, active, initialFunds } = req.body;
 
     // Przygotuj konfigurację instancji
     const config = {
@@ -105,6 +105,7 @@ const createInstance = async (req, res) => {
       name,
       active,
       strategy,
+      initialFunds, // Dodanie obsługi początkowych środków
       instanceId: uuidv4(), // Generuj nowy UUID
     };
 

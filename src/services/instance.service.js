@@ -104,19 +104,24 @@ class InstanceService {
           apiSecret: "test_api_secret",
         };
 
-        // Dodaj przykładowe dane finansowe dla trybu testowego
+        // Dodaj przykładowe dane finansowe dla trybu testowego z uwzględnieniem initialFunds
+        const initialFunds = config.initialFunds || 1000; // Używamy przekazanej wartości lub domyślnej 1000
+
         instance.financials = {
-          allocatedCapital: 1000,
-          currentBalance: 1000,
-          availableBalance: 1000,
+          allocatedCapital: initialFunds,
+          currentBalance: initialFunds,
+          availableBalance: initialFunds,
           lockedBalance: 0,
           totalProfit: 0,
           userId: "000000000000000000000000", // Fikcyjny ID użytkownika
           openPositions: [],
           closedPositions: [],
         };
-      }
 
+        logger.info(
+          `Inicjalizacja instancji testowej ${instanceId} z ${initialFunds} środków`
+        );
+      }
       await instance.save();
 
       // Jeśli instancja ma być aktywna, uruchom ją
