@@ -162,7 +162,9 @@ class AccountService extends EventEmitter {
   async lockFundsForPosition(instanceId, amount, signalId) {
     return await dbService.withTransaction(async (session) => {
       try {
-        const instance = await Instance.findById(instanceId).session(session);
+        const instance = await Instance.findOne({ instanceId }).session(
+          session
+        );
 
         if (!instance) {
           throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
@@ -244,7 +246,9 @@ class AccountService extends EventEmitter {
   ) {
     return await dbService.withTransaction(async (session) => {
       try {
-        const instance = await Instance.findById(instanceId).session(session);
+        const instance = await Instance.findOne({ instanceId }).session(
+          session
+        );
 
         if (!instance) {
           throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
