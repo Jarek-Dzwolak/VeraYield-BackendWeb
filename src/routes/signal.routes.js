@@ -61,4 +61,8 @@ router.get("/export", signalController.exportSignalsToCSV);
 // Pobieranie sygnałów z określonego zakresu dat
 router.get("/date-range", signalController.getSignalsByDateRange);
 
+// Testowe routy
+router.post("/test-entry/:instanceId", signalController.testEntrySignal);
+router.post("/test-exit/:instanceId", signalController.testExitSignal);
+
 module.exports = router;

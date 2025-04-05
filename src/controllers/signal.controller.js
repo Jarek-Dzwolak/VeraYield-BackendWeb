@@ -617,6 +617,72 @@ const getSignalsByDateRange = async (req, res) => {
   }
 };
 
+/**
+ * Testowy endpoint do generowania sygnału wejścia
+ */
+const testEntrySignal = async (req, res) => {
+  try {
+    const { instanceId } = req.params;
+    const { price = 70000 } = req.body;
+
+    // Sprawdź, czy instancja istnieje
+    const instance = await instanceService.getInstance(instanceId);
+    if (!instance) {
+      return res.status(404).json({
+        error: "Not Found",
+        message: "Instance not found",
+      });
+    }
+
+    // Wygeneruj testowy sygnał wejścia
+    signalService.processEntrySignal({
+      instanceId,
+      type: "lowerBandTouch",
+      price: price,
+      timestamp: Date.now(),
+      trend: "up",
+    });
+
+    res.json({
+      success: true,
+      message: "Test entry signal processed",
+      instanceId,
+      price,
+    });
+  } catch (error) {
+    logger.error(`Błąd podczas testowego sygnału wejścia: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Testowy endpoint do generowania sygnału wyjścia
+ */
+const testExitSignal = async (req, res) => {
+  try {
+    const { instanceId } = req.params;
+    const { price = 75000 } = req.body;
+
+    // Wygeneruj testowy sygnał wyjścia
+    signalService.processExitSignal({
+      instanceId,
+      type: "upperBandCrossDown",
+      price: price,
+      timestamp: Date.now(),
+    });
+
+    res.json({
+      success: true,
+      message: "Test exit signal processed",
+      instanceId,
+      price,
+    });
+  } catch (error) {
+    logger.error(`Błąd podczas testowego sygnału wyjścia: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   getAllSignals,
   getSignalsByInstance,
@@ -631,4 +697,7 @@ module.exports = {
   clearSignalHistory,
   exportSignalsToCSV,
   getSignalsByDateRange,
+  // Testowe endpointy
+  testEntrySignal, // DODANE
+  testExitSignal, // DODANE
 };
