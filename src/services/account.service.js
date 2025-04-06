@@ -261,9 +261,10 @@ class AccountService extends EventEmitter {
         }
 
         // Oblicz zysk/stratę
+        const profitPercent = (exitAmount / entryAmount - 1) * 100;
         const profit = exitAmount - entryAmount;
 
-        // Sprawdź, czy pozycja istnieje w otwartych pozycjach
+        // Znajdź pozycję w otwartych pozycjach
         if (!instance.financials.openPositions) {
           instance.financials.openPositions = [];
         }
@@ -272,15 +273,54 @@ class AccountService extends EventEmitter {
           (p) => p.signalId === entrySignalId
         );
 
+        // Jeśli pozycja nie istnieje w bazie, ale istnieje w pamięci, dodaj ją do bazy
         if (positionIndex === -1) {
+          logger.warn(
+            `Pozycja dla sygnału ${entrySignalId} nie znaleziona w bazie, próba pobrania z pamięci RAM`
+          );
+
+          // Sprawdź, czy istnieje w pamięci
+          const activePosition = signalService.getActivePositions(instanceId);
+
+          if (
+            activePosition &&
+            activePosition.entries &&
+            activePosition.entries.some(
+              (entry) => entry.signalId === entrySignalId
+            )
+          ) {
+            // Dodaj pozycję do bazy danych
+            instance.financials.openPositions.push({
+              signalId: entrySignalId,
+              amount: entryAmount,
+              lockedAt: new Date(),
+            });
+
+            logger.info(
+              `Dodano brakującą pozycję do bazy danych z pamięci RAM: ${entrySignalId}`
+            );
+          } else {
+            throw new Error(
+              `Nie znaleziono otwartej pozycji dla sygnału ${entrySignalId} w instancji ${instanceId}`
+            );
+          }
+        }
+
+        // Pobierz indeks ponownie po potencjalnym dodaniu
+        const updatedPositionIndex =
+          instance.financials.openPositions.findIndex(
+            (p) => p.signalId === entrySignalId
+          );
+
+        if (updatedPositionIndex === -1) {
           throw new Error(
             `Nie znaleziono otwartej pozycji dla sygnału ${entrySignalId} w instancji ${instanceId}`
           );
         }
 
         // Pobierz pozycję przed usunięciem
-        const position = instance.financials.openPositions[positionIndex];
-
+        const position =
+          instance.financials.openPositions[updatedPositionIndex];
         // Usuń pozycję z otwartych
         instance.financials.openPositions.splice(positionIndex, 1);
 

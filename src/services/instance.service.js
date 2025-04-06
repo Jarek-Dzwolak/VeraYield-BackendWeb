@@ -29,6 +29,60 @@ class InstanceService {
       // Uruchom aktywne instancje
       for (const instance of instances) {
         await this.startInstance(instance.instanceId);
+
+        // Odtwórz aktywne pozycje w pamięci na podstawie danych z bazy
+        if (
+          instance.financials &&
+          instance.financials.openPositions &&
+          instance.financials.openPositions.length > 0
+        ) {
+          const signalIds = instance.financials.openPositions.map(
+            (p) => p.signalId
+          );
+
+          // Pobierz sygnały dla tych pozycji
+          const entrySignals = await Signal.find({
+            _id: { $in: signalIds },
+            type: "entry",
+          });
+
+          if (entrySignals.length > 0) {
+            // Odtwórz pozycję w pamięci
+            const position = {
+              instanceId: instance.instanceId,
+              symbol: instance.symbol,
+              entryTime: instance.financials.openPositions[0].lockedAt,
+              entryPrice: entrySignals[0].price,
+              capitalAllocation: 0,
+              capitalAmount: 0,
+              status: "active",
+              entries: [],
+            };
+
+            // Dodaj wszystkie wejścia
+            for (const signal of entrySignals) {
+              position.entries.push({
+                time: signal.timestamp,
+                price: signal.price,
+                type: signal.subType,
+                trend: signal.metadata?.trend || "unknown",
+                allocation: signal.allocation,
+                amount: signal.amount,
+                signalId: signal._id.toString(),
+              });
+
+              position.capitalAllocation += signal.allocation || 0;
+              position.capitalAmount += signal.amount || 0;
+            }
+
+            // Dodaj pozycję do mapy w pamięci
+            signalService.setActivePosition(instance.instanceId, position);
+
+            logger.info(
+              `Odtworzono aktywną pozycję dla instancji ${instance.instanceId} z bazy danych`
+            );
+          }
+        }
       }
 
       logger.info(
@@ -40,7 +94,6 @@ class InstanceService {
       );
     }
   }
-
   /**
    * Tworzy nową instancję strategii
    * @param {Object} config - Konfiguracja instancji

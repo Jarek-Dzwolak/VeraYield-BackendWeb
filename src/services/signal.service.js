@@ -530,6 +530,14 @@ class SignalService extends EventEmitter {
   }
 
   /**
+   * Ustawia aktywną pozycję dla instancji (używane przy odtwarzaniu stanu)
+   * @param {string} instanceId - Identyfikator instancji
+   * @param {Object} position - Obiekt pozycji
+   */
+  setActivePosition(instanceId, position) {
+    this.activePositions.set(instanceId, position);
+  }
+  /**
    * Pobiera sygnały z bazy danych
    * @param {Object} filters - Filtry do zapytania
    * @param {number} limit - Limit wyników
