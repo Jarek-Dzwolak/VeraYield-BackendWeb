@@ -174,27 +174,96 @@ class AccountService extends EventEmitter {
           throw new Error(
             `Instancja ${instanceId} nie ma zainicjalizowanych danych finansowych`
           );
-        } // Sprawdź dostępne środki
+        }
+
+        // Sprawdź dostępne środki
         if (instance.financials.availableBalance < amount) {
           throw new Error(
             `Niewystarczające środki w instancji. Dostępne: ${instance.financials.availableBalance}, Wymagane: ${amount}`
           );
         }
 
-        // Aktualizuj dostępne i zablokowane środki
-        instance.financials.availableBalance -= amount;
-        instance.financials.lockedBalance += amount;
-
-        // Dodaj informację o zablokowanych środkach
+        // Inicjalizuj tablicę openPositions, jeśli nie istnieje
         if (!instance.financials.openPositions) {
           instance.financials.openPositions = [];
         }
 
-        instance.financials.openPositions.push({
-          signalId,
-          amount,
-          lockedAt: new Date(),
-        });
+        // Pobierz aktywną pozycję z pamięci
+        const signalService = require("./signal.service");
+        const activePosition = signalService.getActivePositions(instanceId);
+
+        let positionId;
+        let entryType = "first";
+
+        // Sprawdź, czy mamy już otwartą pozycję dla tej instancji
+        if (activePosition) {
+          // To jest kolejne wejście - użyj istniejącego ID pozycji
+          positionId = activePosition.positionId || `position-${instanceId}`;
+          entryType = activePosition.entries.length === 1 ? "second" : "third";
+
+          // Znajdź istniejącą pozycję w bazie danych
+          const positionIndex = instance.financials.openPositions.findIndex(
+            (p) => p.positionId === positionId
+          );
+
+          if (positionIndex !== -1) {
+            // Dodaj nowy sygnał do istniejącej pozycji
+            instance.financials.openPositions[positionIndex].entrySignals.push({
+              signalId,
+              amount,
+              timestamp: new Date(),
+              subType: entryType,
+            });
+            instance.financials.openPositions[positionIndex].totalAmount +=
+              amount;
+
+            logger.info(
+              `Dodano kolejny sygnał wejścia do istniejącej pozycji: ${positionId}, typ: ${entryType}`
+            );
+          } else {
+            // Utwórz nową pozycję, jeśli nie znaleziono (sytuacja niestandardowa)
+            instance.financials.openPositions.push({
+              positionId,
+              entrySignals: [
+                {
+                  signalId,
+                  amount,
+                  timestamp: new Date(),
+                  subType: entryType,
+                },
+              ],
+              totalAmount: amount,
+              firstEntryTime: new Date(),
+            });
+
+            logger.info(
+              `Utworzono nową pozycję (mimo że istnieje w pamięci): ${positionId}, typ: ${entryType}`
+            );
+          }
+        } else {
+          // To pierwsze wejście - utwórz nową pozycję
+          positionId = `position-${instanceId}-${Date.now()}`;
+
+          instance.financials.openPositions.push({
+            positionId,
+            entrySignals: [
+              {
+                signalId,
+                amount,
+                timestamp: new Date(),
+                subType: "first",
+              },
+            ],
+            totalAmount: amount,
+            firstEntryTime: new Date(),
+          });
+
+          logger.info(`Utworzono nową pozycję handlową: ${positionId}`);
+        }
+
+        // Aktualizuj bilans instancji
+        instance.financials.availableBalance -= amount;
+        instance.financials.lockedBalance += amount;
 
         await instance.save({ session });
 
@@ -204,17 +273,19 @@ class AccountService extends EventEmitter {
           signal.amount = amount;
           signal.status = "executed";
           signal.executedAt = new Date();
+          signal.positionId = positionId; // Dodaj referencję do pozycji
           await signal.save({ session });
         }
 
         logger.info(
-          `Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}`
+          `Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}, pozycja: ${positionId}`
         );
 
         // Emituj zdarzenie
         this.emit("fundsLocked", {
           instanceId,
           signalId,
+          positionId,
           amount,
           availableBalance: instance.financials.availableBalance,
           lockedBalance: instance.financials.lockedBalance,
@@ -231,9 +302,9 @@ class AccountService extends EventEmitter {
   /**
    * Aktualizuje bilans po zamknięciu pozycji
    * @param {string} instanceId - ID instancji
-   * @param {string} entrySignalId - ID sygnału wejścia
+   * @param {string} entrySignalId - ID sygnału wejścia lub null jeśli używamy positionId
    * @param {string} exitSignalId - ID sygnału wyjścia
-   * @param {number} entryAmount - Kwota wejścia
+   * @param {number} entryAmount - Kwota wejścia (używana tylko jeśli nie znaleziono pozycji)
    * @param {number} exitAmount - Kwota wyjścia (z zyskiem/stratą)
    * @returns {Promise<Object>} - Zaktualizowana instancja i użytkownik
    */
@@ -262,72 +333,130 @@ class AccountService extends EventEmitter {
           );
         }
 
-        // Oblicz zysk/stratę
-        const profitPercent = (exitAmount / entryAmount - 1) * 100;
-        const profit = exitAmount - entryAmount;
+        // Pobierz aktywną pozycję z pamięci
+        const activePosition = signalService.getActivePositions(instanceId);
+        logger.debug(
+          `Aktywna pozycja z pamięci RAM: ${activePosition ? JSON.stringify(activePosition) : "brak"}`
+        );
 
-        // Znajdź pozycję w otwartych pozycjach
+        // Przygotuj się do wyszukania pozycji w bazie
+        let positionId = null;
+        if (activePosition) {
+          positionId = activePosition.positionId;
+          logger.debug(`Znaleziono ID pozycji w pamięci RAM: ${positionId}`);
+        }
+
+        // Znajdź pozycję w instancji
+        let position = null;
+        let positionIndex = -1;
+
+        // Inicjalizuj openPositions, jeśli nie istnieje
         if (!instance.financials.openPositions) {
           instance.financials.openPositions = [];
         }
 
-        const positionIndex = instance.financials.openPositions.findIndex(
-          (p) => p.signalId === entrySignalId
+        logger.debug(
+          `Liczba otwartych pozycji w bazie: ${instance.financials.openPositions.length}`
         );
 
-        // Jeśli pozycja nie istnieje w bazie, ale istnieje w pamięci, dodaj ją do bazy
-        if (positionIndex === -1) {
-          logger.warn(
-            `Pozycja dla sygnału ${entrySignalId} nie znaleziona w bazie, próba pobrania z pamięci RAM`
+        // Jeśli mamy positionId, znajdź pozycję po tym ID
+        if (positionId) {
+          positionIndex = instance.financials.openPositions.findIndex(
+            (p) => p.positionId === positionId
           );
-
-          // Sprawdź, czy istnieje w pamięci
-          const activePosition = signalService.getActivePositions(instanceId);
-
-          // Dodaj dodatkowe sprawdzenie, czy activePosition istnieje i ma poprawną strukturę
-          if (
-            activePosition &&
-            activePosition.entries &&
-            Array.isArray(activePosition.entries) &&
-            activePosition.entries.length > 0 &&
-            activePosition.entries.some(
-              (entry) => entry.signalId === entrySignalId
-            )
-          ) {
-            // Dodaj pozycję do bazy danych
-            instance.financials.openPositions.push({
-              signalId: entrySignalId,
-              amount: entryAmount,
-              lockedAt: new Date(),
-            });
-
+          if (positionIndex !== -1) {
+            position = instance.financials.openPositions[positionIndex];
             logger.info(
-              `Dodano brakującą pozycję do bazy danych z pamięci RAM: ${entrySignalId}`
-            );
-          } else {
-            throw new Error(
-              `Nie znaleziono otwartej pozycji dla sygnału ${entrySignalId} w instancji ${instanceId}`
+              `Znaleziono pozycję po ID pozycji: ${positionId}, indeks: ${positionIndex}`
             );
           }
         }
 
-        // Pobierz indeks ponownie po potencjalnym dodaniu
-        const updatedPositionIndex =
-          instance.financials.openPositions.findIndex(
-            (p) => p.signalId === entrySignalId
+        // Jeśli nie znaleziono po positionId, spróbuj znaleźć po ID sygnału
+        if (!position && entrySignalId) {
+          for (let i = 0; i < instance.financials.openPositions.length; i++) {
+            const pos = instance.financials.openPositions[i];
+            const foundSignal =
+              pos.entrySignals &&
+              pos.entrySignals.some(
+                (entry) =>
+                  entry.signalId === entrySignalId ||
+                  String(entry.signalId) === String(entrySignalId)
+              );
+
+            if (foundSignal) {
+              position = pos;
+              positionIndex = i;
+              logger.info(
+                `Znaleziono pozycję po ID sygnału wejścia: ${entrySignalId}, indeks: ${i}`
+              );
+              break;
+            }
+          }
+        }
+
+        // Jeśli nadal nie znaleziono, a mamy aktywną pozycję w pamięci, odtwórz ją
+        if (
+          !position &&
+          activePosition &&
+          activePosition.entries &&
+          activePosition.entries.length > 0
+        ) {
+          logger.info(
+            `Odtwarzanie pozycji z pamięci RAM dla instancji ${instanceId}`
           );
 
-        if (updatedPositionIndex === -1) {
-          throw new Error(
-            `Nie znaleziono otwartej pozycji dla sygnału ${entrySignalId} w instancji ${instanceId}`
+          // Utwórz nową pozycję bazując na danych z pamięci
+          const totalEntryAmount = activePosition.entries.reduce(
+            (sum, entry) => sum + (entry.amount || 0),
+            0
+          );
+          const newPosition = {
+            positionId:
+              activePosition.positionId ||
+              `position-${instanceId}-${Date.now()}`,
+            entrySignals: activePosition.entries.map((entry) => ({
+              signalId: entry.signalId,
+              amount:
+                entry.amount || entryAmount / activePosition.entries.length,
+              timestamp: new Date(entry.time || Date.now()),
+              subType: entry.type || "first",
+            })),
+            totalAmount: totalEntryAmount || entryAmount,
+            firstEntryTime: new Date(activePosition.entryTime || Date.now()),
+          };
+
+          // Dodaj pozycję do instancji
+          instance.financials.openPositions.push(newPosition);
+          positionIndex = instance.financials.openPositions.length - 1;
+          position = newPosition;
+
+          logger.info(
+            `Odtworzono pozycję w bazie danych: ${JSON.stringify(newPosition)}`
           );
         }
 
-        // Pobierz pozycję przed usunięciem
-        const position =
-          instance.financials.openPositions[updatedPositionIndex];
+        // Jeśli nadal nie mamy pozycji, rzuć błąd
+        if (!position) {
+          throw new Error(
+            `Nie znaleziono otwartej pozycji dla instancji ${instanceId}`
+          );
+        }
+
+        // Oblicz łączną kwotę wejść i zysk
+        const totalEntryAmount = position.totalAmount || entryAmount;
+        const profit = exitAmount - totalEntryAmount;
+        const profitPercent = (exitAmount / totalEntryAmount - 1) * 100;
+
+        logger.info(
+          `Finalizacja pozycji: entryAmount=${totalEntryAmount}, exitAmount=${exitAmount}, profit=${profit}, profitPercent=${profitPercent}`
+        );
+
+        // Pobierz szczegóły pozycji przed usunięciem
+        const positionDetails = JSON.parse(JSON.stringify(position));
+
         // Usuń pozycję z otwartych
-        instance.financials.openPositions.splice(updatedPositionIndex, 1);
+        instance.financials.openPositions.splice(positionIndex, 1);
 
         // Dodaj do zamkniętych pozycji
         if (!instance.financials.closedPositions) {
@@ -335,16 +464,17 @@ class AccountService extends EventEmitter {
         }
 
         instance.financials.closedPositions.push({
-          entrySignalId,
+          positionId: position.positionId,
+          entrySignals: position.entrySignals,
           exitSignalId,
-          entryAmount,
+          totalEntryAmount,
           exitAmount,
           profit,
           closedAt: new Date(),
         });
 
         // Aktualizuj bilans instancji
-        instance.financials.lockedBalance -= entryAmount;
+        instance.financials.lockedBalance -= totalEntryAmount;
         instance.financials.availableBalance += exitAmount;
         instance.financials.currentBalance =
           instance.financials.availableBalance +
@@ -357,10 +487,23 @@ class AccountService extends EventEmitter {
         const exitSignal = await Signal.findById(exitSignalId).session(session);
         if (exitSignal) {
           exitSignal.profit = profit;
+          exitSignal.profitPercent = profitPercent;
           exitSignal.exitAmount = exitAmount;
           exitSignal.status = "executed";
           exitSignal.executedAt = new Date();
-          exitSignal.entrySignalId = entrySignalId;
+          exitSignal.positionId = position.positionId;
+
+          // Dodaj referencje do wszystkich sygnałów wejścia
+          if (position.entrySignals && position.entrySignals.length > 0) {
+            exitSignal.entrySignalIds = position.entrySignals.map(
+              (entry) => entry.signalId
+            );
+            // Dla zachowania kompatybilności wstecz
+            exitSignal.entrySignalId = position.entrySignals[0].signalId;
+          } else if (entrySignalId) {
+            exitSignal.entrySignalId = entrySignalId;
+          }
+
           await exitSignal.save({ session });
         }
 
@@ -382,23 +525,39 @@ class AccountService extends EventEmitter {
           }
 
           // Pobierz sygnały, aby uzyskać więcej informacji
-          const entrySignal =
-            await Signal.findById(entrySignalId).session(session);
+          let entryPrice = 0;
+          let exitPrice = 0;
+
+          if (position.entrySignals && position.entrySignals.length > 0) {
+            const firstEntrySignalId = position.entrySignals[0].signalId;
+            const entrySignal =
+              await Signal.findById(firstEntrySignalId).session(session);
+            if (entrySignal) {
+              entryPrice = entrySignal.price;
+            }
+          }
+
+          if (exitSignal) {
+            exitPrice = exitSignal.price;
+          }
 
           // Dodaj transakcję do historii użytkownika
           user.financials.tradeHistory.push({
             instanceId,
-            symbol: entrySignal ? entrySignal.symbol : "UNKNOWN",
-            entryTime: position.lockedAt,
+            symbol: instance.symbol || "UNKNOWN",
+            entryTime: position.firstEntryTime || new Date(),
             exitTime: new Date(),
-            entryPrice: entrySignal ? entrySignal.price : 0,
-            exitPrice: exitSignal ? exitSignal.price : 0,
-            amount: entryAmount,
+            entryPrice: entryPrice,
+            exitPrice: exitPrice,
+            amount: totalEntryAmount,
             profit,
-            profitPercent: exitSignal
-              ? exitSignal.profitPercent
-              : (profit / entryAmount) * 100,
-            signalIds: [entrySignalId, exitSignalId],
+            profitPercent,
+            signalIds: [
+              ...(position.entrySignals
+                ? position.entrySignals.map((e) => e.signalId)
+                : []),
+              exitSignalId,
+            ],
           });
 
           // Aktualizuj statystyki użytkownika
@@ -421,12 +580,13 @@ class AccountService extends EventEmitter {
         // Emituj zdarzenie
         this.emit("positionClosed", {
           instanceId,
-          entrySignalId,
+          positionId: position.positionId,
+          entrySignals: position.entrySignals,
           exitSignalId,
-          entryAmount,
+          totalEntryAmount,
           exitAmount,
           profit,
-          profitPercent: (profit / entryAmount) * 100,
+          profitPercent,
           userId: instance.financials.userId,
         });
 

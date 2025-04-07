@@ -663,7 +663,7 @@ const testExitSignal = async (req, res) => {
     const { instanceId } = req.params;
     const { price = 75000 } = req.body;
 
-    // Pobierz aktualną pozycję, aby uzyskać ID sygnału wejścia
+    // Pobierz aktualną pozycję
     const activePosition = signalService.getActivePositions(instanceId);
 
     if (
@@ -677,16 +677,20 @@ const testExitSignal = async (req, res) => {
       });
     }
 
-    // Pobierz ID pierwszego sygnału wejścia
-    const entrySignalId = activePosition.entries[0].signalId;
+    logger.info(
+      `Używam pozycji z pamięci RAM: ${JSON.stringify(activePosition)}`
+    );
 
-    // Wygeneruj testowy sygnał wyjścia z prawidłowym ID sygnału wejścia
-    signalService.processExitSignal({
+    // Użyj ID pozycji zamiast konkretnego ID sygnału wejścia
+    const positionId = activePosition.positionId || `position-${instanceId}`;
+
+    // Wygeneruj testowy sygnał wyjścia z ID pozycji
+    const result = await signalService.processExitSignal({
       instanceId,
       type: "upperBandCrossDown",
       price: price,
       timestamp: Date.now(),
-      entrySignalId: entrySignalId, // Dodanie ID sygnału wejścia
+      positionId: positionId,
     });
 
     res.json({
@@ -694,7 +698,7 @@ const testExitSignal = async (req, res) => {
       message: "Test exit signal processed",
       instanceId,
       price,
-      entrySignalId, // Zwróć ID sygnału wejścia dla informacji
+      positionId,
     });
   } catch (error) {
     logger.error(`Błąd podczas testowego sygnału wyjścia: ${error.message}`);

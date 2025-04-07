@@ -106,6 +106,9 @@ class SignalService extends EventEmitter {
           return;
         }
 
+        // Wygeneruj unikalny identyfikator pozycji
+        const positionId = `position-${instanceId}-${Date.now()}`;
+
         // Określ kwotę alokacji (pierwszy entry)
         const allocationAmount =
           instance.financials.availableBalance * firstEntryPercent;
@@ -121,7 +124,8 @@ class SignalService extends EventEmitter {
           amount: allocationAmount,
           timestamp,
           status: "pending", // Przed wykonaniem przez AccountService
-          metadata: { trend },
+          metadata: { trend, positionId },
+          positionId: positionId,
         });
 
         // Zablokuj środki na pozycję
@@ -136,12 +140,11 @@ class SignalService extends EventEmitter {
           const newPosition = {
             instanceId,
             symbol: instance.symbol,
+            positionId: positionId,
             entryTime: timestamp,
             entryPrice: price,
-            entryType: "first",
             capitalAllocation: firstEntryPercent,
             capitalAmount: allocationAmount,
-            signalId: signal._id,
             status: "active",
             entries: [
               {
@@ -167,7 +170,7 @@ class SignalService extends EventEmitter {
           this.emit("newPosition", newPosition);
 
           logger.info(
-            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${allocationAmount}, trend: ${trend}`
+            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${allocationAmount}, trend: ${trend}, positionId: ${positionId}`
           );
         } catch (error) {
           logger.error(
@@ -259,6 +262,7 @@ class SignalService extends EventEmitter {
           timestamp,
           status: "pending",
           metadata: { trend },
+          positionId: currentPosition.positionId,
         });
 
         // Zablokuj środki na pozycję
@@ -335,7 +339,7 @@ class SignalService extends EventEmitter {
    */
   async processExitSignal(signalData) {
     try {
-      const { instanceId, type, price, timestamp } = signalData;
+      const { instanceId, type, price, timestamp, positionId } = signalData;
 
       // Pobierz bieżący stan pozycji dla instancji
       const currentPosition = this.activePositions.get(instanceId);
@@ -346,6 +350,15 @@ class SignalService extends EventEmitter {
           `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - brak aktywnej pozycji`
         );
         return;
+      }
+
+      // Sprawdź, czy pozycja ma prawidłowe positionId
+      if (positionId && currentPosition.positionId !== positionId) {
+        logger.warn(
+          `ID pozycji się nie zgadza: oczekiwane ${positionId}, aktualne ${currentPosition.positionId}`
+        );
+        // Aktualizuj ID pozycji w pamięci, jeśli nie jest zgodne
+        currentPosition.positionId = positionId;
       }
 
       // Oblicz wynik dla pozycji
@@ -374,6 +387,7 @@ class SignalService extends EventEmitter {
         profit,
         timestamp,
         status: "pending",
+        positionId: currentPosition.positionId,
         metadata: {
           entryAvgPrice,
           totalEntryAmount,
@@ -388,11 +402,15 @@ class SignalService extends EventEmitter {
         },
       });
 
+      // Użyj entrySignalId TYLKO jeśli potrzeba dla zachowania kompatybilności
+      // Preferujemy używanie positionId
+      const firstEntrySignalId = currentPosition.entries[0]?.signalId;
+
       try {
         // Finalizuj pozycję w AccountService
         await accountService.finalizePosition(
           instanceId,
-          currentPosition.entries[0].signalId, // ID pierwszego sygnału wejścia
+          firstEntrySignalId, // ID pierwszego sygnału wejścia
           exitSignal._id, // ID sygnału wyjścia
           totalEntryAmount,
           exitAmount
@@ -427,6 +445,8 @@ class SignalService extends EventEmitter {
         logger.info(
           `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)}, typ: ${type})`
         );
+
+        return exitSignal;
       } catch (error) {
         logger.error(`Nie udało się sfinalizować pozycji: ${error.message}`);
 
@@ -437,11 +457,14 @@ class SignalService extends EventEmitter {
             cancelReason: `Nie udało się sfinalizować pozycji: ${error.message}`,
           },
         });
+
+        throw error;
       }
     } catch (error) {
       logger.error(
         `Błąd podczas przetwarzania sygnału wyjścia: ${error.message}`
       );
+      throw error;
     }
   }
 
@@ -484,6 +507,7 @@ class SignalService extends EventEmitter {
         status: signalData.status || "pending",
         metadata: signalData.metadata || {},
         entrySignalId: signalData.entrySignalId,
+        positionId: signalData.positionId, // Nowe pole
       });
 
       await signal.save();
@@ -535,8 +559,19 @@ class SignalService extends EventEmitter {
    * @param {Object} position - Obiekt pozycji
    */
   setActivePosition(instanceId, position) {
+    // Upewniamy się, że pozycja ma positionId
+    if (!position.positionId) {
+      position.positionId = `position-${instanceId}-${Date.now()}`;
+    }
+
     this.activePositions.set(instanceId, position);
+
+    // Jeśli pozycja ma pierwsze wejście, ustaw ostatni czas wejścia
+    if (position.entries && position.entries.length > 0) {
+      this.lastEntryTimes.set(instanceId, position.entries[0].time);
+    }
   }
+
   /**
    * Pobiera sygnały z bazy danych
    * @param {Object} filters - Filtry do zapytania

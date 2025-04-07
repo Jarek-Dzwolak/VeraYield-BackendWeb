@@ -122,6 +122,8 @@ const InstanceSchema = new Schema({
   },
 
   // Dane finansowe (bez zmian)
+  // W modelu instancji (instance.model.js), znajdź część z financials i zastąp definition openPositions:
+
   financials: {
     allocatedCapital: {
       type: Number,
@@ -151,33 +153,51 @@ const InstanceSchema = new Schema({
       type: Schema.Types.ObjectId,
       ref: "User",
     },
+    // NOWA STRUKTURA openPositions - ZASTĄP CAŁKOWICIE ISTNIEJĄCĄ
     openPositions: [
       {
-        signalId: {
+        positionId: {
           type: String,
           required: true,
         },
-        amount: {
+        entrySignals: [
+          {
+            signalId: String,
+            amount: Number,
+            timestamp: Date,
+            subType: String, // "first", "second", "third"
+          },
+        ],
+        totalAmount: {
           type: Number,
-          required: true,
+          default: 0,
         },
-        lockedAt: {
+        firstEntryTime: {
           type: Date,
           default: Date.now,
         },
       },
     ],
+    // NOWA STRUKTURA closedPositions - ZASTĄP CAŁKOWICIE ISTNIEJĄCĄ
     closedPositions: [
       {
-        entrySignalId: {
+        positionId: {
           type: String,
           required: true,
         },
+        entrySignals: [
+          {
+            signalId: String,
+            amount: Number,
+            timestamp: Date,
+            subType: String,
+          },
+        ],
         exitSignalId: {
           type: String,
           required: true,
         },
-        entryAmount: {
+        totalEntryAmount: {
           type: Number,
           required: true,
         },
@@ -196,7 +216,6 @@ const InstanceSchema = new Schema({
       },
     ],
   },
-
   // Statystyki
   stats: {
     totalSignals: {

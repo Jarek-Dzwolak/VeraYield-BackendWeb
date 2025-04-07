@@ -111,7 +111,23 @@ const SignalSchema = new Schema({
     type: String,
     index: true,
   },
+  entrySignalId: {
+    type: String,
+    index: true,
+  },
 
+  // ID pozycji handlowej (łączy wiele sygnałów wejścia z jednym wyjścia)
+  positionId: {
+    type: String,
+    index: true,
+  },
+
+  // Dla sygnałów wyjścia - tablica referencji do wszystkich sygnałów wejścia
+  entrySignalIds: [
+    {
+      type: String,
+    },
+  ],
   // Data utworzenia rekordu
   createdAt: {
     type: Date,
