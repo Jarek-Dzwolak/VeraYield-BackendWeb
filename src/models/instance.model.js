@@ -121,9 +121,7 @@ const InstanceSchema = new Schema({
     },
   },
 
-  // Dane finansowe (bez zmian)
-  // W modelu instancji (instance.model.js), znajdź część z financials i zastąp definition openPositions:
-
+  // Dane finansowe
   financials: {
     allocatedCapital: {
       type: Number,
@@ -153,7 +151,7 @@ const InstanceSchema = new Schema({
       type: Schema.Types.ObjectId,
       ref: "User",
     },
-    // NOWA STRUKTURA openPositions - ZASTĄP CAŁKOWICIE ISTNIEJĄCĄ
+    // Struktura openPositions - przechowuje aktywne pozycje
     openPositions: [
       {
         positionId: {
@@ -178,7 +176,7 @@ const InstanceSchema = new Schema({
         },
       },
     ],
-    // NOWA STRUKTURA closedPositions - ZASTĄP CAŁKOWICIE ISTNIEJĄCĄ
+    // Struktura closedPositions - przechowuje zamknięte pozycje
     closedPositions: [
       {
         positionId: {

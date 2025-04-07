@@ -109,7 +109,7 @@ class SignalService extends EventEmitter {
         // Wygeneruj unikalny identyfikator pozycji
         const positionId = `position-${instanceId}-${Date.now()}`;
 
-        // Określ kwotę alokacji (pierwszy entry)
+        // Określ kwotę alokacji (pierwszy entry) na podstawie dostępnych środków
         const allocationAmount =
           instance.financials.availableBalance * firstEntryPercent;
 
@@ -237,16 +237,16 @@ class SignalService extends EventEmitter {
         let entryType = "";
 
         if (entryCount === 1) {
-          // Drugie wejście
+          // Drugie wejście - % z AKTUALNIE dostępnych środków
           allocationPercent = secondEntryPercent;
           entryType = "second";
         } else if (entryCount === 2) {
-          // Trzecie wejście
+          // Trzecie wejście - % z AKTUALNIE dostępnych środków
           allocationPercent = thirdEntryPercent;
           entryType = "third";
         }
 
-        // Oblicz kwotę na podstawie dostępnych środków
+        // Oblicz kwotę na podstawie AKTUALNIE dostępnych środków
         const allocationAmount =
           instance.financials.availableBalance * allocationPercent;
 
@@ -284,10 +284,9 @@ class SignalService extends EventEmitter {
             signalId: signal._id,
           });
 
-          // Zaktualizuj alokację kapitału
+          // Zaktualizuj alokację kapitału i całkowitą kwotę
           currentPosition.capitalAllocation += allocationPercent;
-          currentPosition.capitalAmount =
-            (currentPosition.capitalAmount || 0) + allocationAmount;
+          currentPosition.capitalAmount += allocationAmount;
 
           // Zapisz czas ostatniego wejścia
           this.lastEntryTimes.set(instanceId, timestamp);

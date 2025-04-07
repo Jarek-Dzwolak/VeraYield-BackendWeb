@@ -443,10 +443,16 @@ class AccountService extends EventEmitter {
           );
         }
 
-        // Oblicz łączną kwotę wejść i zysk
-        const totalEntryAmount = position.totalAmount || entryAmount;
+        // Oblicz łączną kwotę wejść
+        // Upewnij się, że używamy totalAmount do obliczenia rzeczywistej kwoty wejść
+        const totalEntryAmount =
+          position.totalAmount ||
+          position.entrySignals.reduce((sum, entry) => sum + entry.amount, 0) ||
+          entryAmount;
+
+        // Oblicz zysk na podstawie rzeczywistej kwoty wejść i kwoty wyjścia
         const profit = exitAmount - totalEntryAmount;
-        const profitPercent = (exitAmount / totalEntryAmount - 1) * 100;
+        const profitPercent = (profit / totalEntryAmount) * 100;
 
         logger.info(
           `Finalizacja pozycji: entryAmount=${totalEntryAmount}, exitAmount=${exitAmount}, profit=${profit}, profitPercent=${profitPercent}`
