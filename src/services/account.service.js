@@ -327,7 +327,7 @@ class AccountService extends EventEmitter {
         const position =
           instance.financials.openPositions[updatedPositionIndex];
         // Usuń pozycję z otwartych
-        instance.financials.openPositions.splice(positionIndex, 1);
+        instance.financials.openPositions.splice(updatedPositionIndex, 1);
 
         // Dodaj do zamkniętych pozycji
         if (!instance.financials.closedPositions) {
