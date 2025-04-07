@@ -244,6 +244,8 @@ class AccountService extends EventEmitter {
     entryAmount,
     exitAmount
   ) {
+    const signalService = require("./signal.service");
+
     return await dbService.withTransaction(async (session) => {
       try {
         const instance = await Instance.findOne({ instanceId }).session(
@@ -282,9 +284,12 @@ class AccountService extends EventEmitter {
           // Sprawdź, czy istnieje w pamięci
           const activePosition = signalService.getActivePositions(instanceId);
 
+          // Dodaj dodatkowe sprawdzenie, czy activePosition istnieje i ma poprawną strukturę
           if (
             activePosition &&
             activePosition.entries &&
+            Array.isArray(activePosition.entries) &&
+            activePosition.entries.length > 0 &&
             activePosition.entries.some(
               (entry) => entry.signalId === entrySignalId
             )
