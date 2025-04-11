@@ -16,7 +16,6 @@ const instanceService = require("./services/instance.service");
 const dbService = require("./services/db.service");
 const binanceService = require("./services/binance.service");
 const wsService = require("./services/ws.service");
-const analysisService = require("./services/analysis.service");
 
 // Pobierz port z zmiennych środowiskowych lub użyj domyślnego
 const PORT = process.env.PORT || 3000;
@@ -86,14 +85,14 @@ const initializeApp = async () => {
 
     logger.info("Zainicjalizowano serwer WebSocket");
 
-    // Inicjalizuj instancję analizy dla frontendu
-    await analysisService.initializeInstance("frontend", {
-      symbol: "BTCUSDT",
-      hurst: { periods: 25, deviationFactor: 2.0 },
-      ema: { periods: 30 },
-      checkEMATrend: true,
-    });
-    logger.info("Zainicjalizowano instancję analizy dla frontendu");
+    // ZAKOMENTOWANE: Instancja "frontend" powoduje podwójne generowanie sygnałów
+    // await analysisService.initializeInstance("frontend", {
+    //   symbol: "BTCUSDT",
+    //   hurst: { periods: 25, deviationFactor: 2.0 },
+    //   ema: { periods: 30 },
+    //   checkEMATrend: true,
+    // });
+    // logger.info("Zainicjalizowano instancję analizy dla frontendu");
 
     // Uruchom serwer HTTP
     server.listen(PORT, () => {

@@ -165,7 +165,8 @@ class SignalService extends EventEmitter {
 
           // Zapisz czas ostatniego wejścia
           this.lastEntryTimes.set(instanceId, timestamp);
-
+          // Reset Trailing stopa
+          analysisService.resetTrailingStopTracking(instanceId);
           // Emituj zdarzenie
           this.emit("newPosition", newPosition);
 

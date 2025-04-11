@@ -34,6 +34,10 @@ const config = {
     checkEMATrend: true,
     // Wartość trailing stop (procent od maksimum)
     trailingStop: 0.02, // 2%
+    // Czy włączyć trailing stop
+    enableTrailingStop: true,
+    // Opóźnienie aktywacji trailing stopu po przekroczeniu górnej bandy (ms)
+    trailingStopDelay: 5 * 60 * 1000, // 5 minut
   },
 
   // Domyślna alokacja kapitału
@@ -143,6 +147,24 @@ const validateInstanceParams = (params) => {
         errors.push(
           `Współczynnik odchylenia dolnej bandy Hursta musi być z zakresu ${min}-${max}`
         );
+      }
+    }
+    // Walidacja trailing stopu
+    if (params.signals?.trailingStop !== undefined) {
+      if (
+        params.signals.trailingStop < 0.005 ||
+        params.signals.trailingStop > 0.1
+      ) {
+        errors.push("Wartość trailing stopu musi być w zakresie 0.5%-10%");
+      }
+    }
+
+    if (params.signals?.trailingStopDelay !== undefined) {
+      if (
+        params.signals.trailingStopDelay < 0 ||
+        params.signals.trailingStopDelay > 3600000
+      ) {
+        errors.push("Opóźnienie trailing stopu musi być w zakresie 0-60 minut");
       }
     }
   }

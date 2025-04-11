@@ -13,7 +13,7 @@ const {
   CrossDetector,
 } = require("../utils/technical");
 const binanceService = require("./binance.service");
-const logger = require("../utils/logger");
+const logger = require("./logger");
 const { EventEmitter } = require("events");
 
 class AnalysisService extends EventEmitter {
@@ -24,6 +24,7 @@ class AnalysisService extends EventEmitter {
     this.lastPrices = new Map(); // Mapa ostatnich cen (instanceId -> lastPrice)
     this.highestPrices = new Map(); // Mapa najwyższych cen dla trailing stopu
     this.extremumReached = new Map(); // Flaga czy osiągnięto ekstremum dla instancji
+    this.trailingStopActivationTime = new Map(); // Czas aktywacji trailing stopu
     this.setupListeners();
   }
 
@@ -133,6 +134,19 @@ class AnalysisService extends EventEmitter {
         this.highestPrices.set(instanceId, currentHigh);
       }
     }
+  }
+
+  /**
+   * Resetuje śledzenie trailing stopu dla instancji
+   * @param {string} instanceId - Identyfikator instancji
+   */
+  resetTrailingStopTracking(instanceId) {
+    this.extremumReached.set(instanceId, false);
+    this.highestPrices.delete(instanceId);
+    this.trailingStopActivationTime.delete(instanceId);
+    logger.debug(
+      `Zresetowano śledzenie trailing stopu dla instancji ${instanceId}`
+    );
   }
 
   /**
@@ -425,6 +439,8 @@ class AnalysisService extends EventEmitter {
       if (upperBandBreak && !this.extremumReached.get(instanceId)) {
         this.extremumReached.set(instanceId, true);
         this.highestPrices.set(instanceId, currentHigh);
+        // Zapisz czas aktywacji trailing stopu
+        this.trailingStopActivationTime.set(instanceId, Date.now());
 
         logger.debug(
           `Osiągnięto górne ekstremum dla instancji ${instanceId}, aktywowano trailing stop (cena=${currentHigh})`
@@ -453,10 +469,14 @@ class AnalysisService extends EventEmitter {
         // Resetuj flagi trailing stopu
         this.extremumReached.set(instanceId, false);
         this.highestPrices.delete(instanceId);
+        this.trailingStopActivationTime.delete(instanceId);
 
         logger.info(
           `Wykryto sygnał wyjścia dla instancji ${instanceId} (przecięcie górnej bandy kanału Hursta w dół przy cenie ${currentPrice})`
         );
+
+        // Zakończ funkcję wcześniej - wyjście przez przecięcie górnej bandy ma priorytet
+        return;
       }
 
       // 4. Sprawdź trailing stop (jeśli aktywny)
@@ -465,9 +485,36 @@ class AnalysisService extends EventEmitter {
         this.highestPrices.has(instanceId)
       ) {
         const highestPrice = this.highestPrices.get(instanceId);
+        const activationTime =
+          this.trailingStopActivationTime.get(instanceId) || 0;
+        const config = this.instances.get(instanceId);
+
+        // Aktualizuj najwyższą cenę jeśli aktualny high jest wyższy
+        if (currentHigh > highestPrice) {
+          this.highestPrices.set(instanceId, currentHigh);
+        }
+
+        // Sprawdź, czy trailing stop jest włączony dla tej instancji
+        const trailingStopEnabled =
+          config?.signals?.enableTrailingStop !== false;
+
+        // Jeśli trailing stop nie jest włączony, wyjdź wcześniej
+        if (!trailingStopEnabled) {
+          return;
+        }
+
+        // Pobierz opóźnienie aktywacji trailing stopu (domyślnie 5 minut)
+        const trailingStopDelay =
+          config?.signals?.trailingStopDelay || 5 * 60 * 1000;
+
+        // Sprawdź, czy upłynął wymagany czas od aktywacji
+        const timeElapsed = Date.now() - activationTime;
+        if (timeElapsed < trailingStopDelay) {
+          return; // Jeszcze nie upłynął wymagany czas
+        }
 
         // Ustaw bazowy trailing stop
-        let trailingStopPercent = 0.03; // Domyślnie 3%
+        let trailingStopPercent = config?.signals?.trailingStop || 0.02; // Domyślnie 2%
 
         // Dynamicznie dostosuj trailing stop na podstawie trendu - jak w backtestingu
         if (currentTrend === "strong_up") {
@@ -498,6 +545,7 @@ class AnalysisService extends EventEmitter {
           // Resetuj flagi trailing stopu
           this.extremumReached.set(instanceId, false);
           this.highestPrices.delete(instanceId);
+          this.trailingStopActivationTime.delete(instanceId);
 
           logger.info(
             `Wykryto sygnał wyjścia przez trailing stop dla instancji ${instanceId} (spadek ${(dropFromHigh * 100).toFixed(2)}% od najwyższej ceny ${highestPrice})`
@@ -570,6 +618,7 @@ class AnalysisService extends EventEmitter {
       this.lastPrices.delete(instanceId);
       this.extremumReached.delete(instanceId);
       this.highestPrices.delete(instanceId);
+      this.trailingStopActivationTime.delete(instanceId);
 
       logger.info(`Zatrzymano analizę dla instancji ${instanceId}`);
       return true;
