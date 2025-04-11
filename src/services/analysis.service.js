@@ -13,7 +13,7 @@ const {
   CrossDetector,
 } = require("../utils/technical");
 const binanceService = require("./binance.service");
-const logger = require("./logger");
+const logger = require("../utils/logger");
 const { EventEmitter } = require("events");
 
 class AnalysisService extends EventEmitter {
