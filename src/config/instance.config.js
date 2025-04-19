@@ -38,6 +38,9 @@ const config = {
     enableTrailingStop: true,
     // Opóźnienie aktywacji trailing stopu po przekroczeniu górnej bandy (ms)
     trailingStopDelay: 5 * 60 * 1000, // 5 minut
+    // Minimalny czas trwania pierwszego wejścia (ms)
+    // Używane do uniknięcia fałszywych sygnałów w krótkim czasie
+    minFirstEntryDuration: 60 * 60 * 1000, // 1 godzina - minimalny czas trwania pierwszego wejścia
   },
 
   // Domyślna alokacja kapitału
@@ -79,6 +82,11 @@ const config = {
     // Limity dla minimalnego odstępu czasowego między wejściami
     minEntryTimeGap: {
       min: 5 * 60 * 1000, // 5 minut
+      max: 24 * 60 * 60 * 1000, // 24 godziny
+    },
+    // Limity dla minimalnego czasu trwania pierwszego wejścia
+    minFirstEntryDuration: {
+      min: 0, // 0 minut (wyłączone)
       max: 24 * 60 * 60 * 1000, // 24 godziny
     },
     // Limity alokacji kapitału
@@ -179,6 +187,17 @@ const validateInstanceParams = (params) => {
     }
   }
 
+  // Walidacja minnimalnego czsu trwania pierwszego wejścia
+  if (params.signals?.minFirstEntryDuration !== undefined) {
+    if (
+      params.signals.minFirstEntryDuration < 0 ||
+      params.signals.minFirstEntryDuration > 24 * 60 * 60 * 1000
+    ) {
+      errors.push(
+        "Minimalny czas trwania pierwszego wejścia musi być w zakresie 0-24 godzin"
+      );
+    }
+  }
   // Walidacja minimalnego odstępu czasowego
   if (params.signals && params.signals.minEntryTimeGap !== undefined) {
     const { min, max } = config.limits.minEntryTimeGap;

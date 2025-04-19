@@ -351,7 +351,32 @@ class SignalService extends EventEmitter {
         );
         return;
       }
+      // Sprawdź minimalny czas trwania pierwszego wejścia (tylko jeśli mamy jedno wejście)
+      const entryCount = currentPosition.entries.length;
+      if (entryCount === 1) {
+        // Pobierz instancję, aby uzyskać dostęp do konfiguracji
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          logger.error(`Nie znaleziono instancji ${instanceId} w bazie danych`);
+          // Kontynuuj bez sprawdzania czasu, żeby nie blokować całkowicie
+        } else {
+          // Pobierz minimalny czas trwania pierwszego wejścia (domyślnie 1 godzina)
+          const minFirstEntryDuration =
+            instance.strategy.parameters.signals?.minFirstEntryDuration ||
+            60 * 60 * 1000;
 
+          // Oblicz czas trwania pozycji
+          const positionDuration = timestamp - currentPosition.entryTime;
+
+          // Jeśli czas trwania jest zbyt krótki, ignoruj sygnał wyjścia
+          if (positionDuration < minFirstEntryDuration) {
+            logger.info(
+              `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - pierwsze wejście zbyt świeże (${(positionDuration / 60000).toFixed(1)} min < ${minFirstEntryDuration / 60000} min)`
+            );
+            return;
+          }
+        }
+      }
       // Sprawdź, czy pozycja ma prawidłowe positionId
       if (positionId && currentPosition.positionId !== positionId) {
         logger.warn(
