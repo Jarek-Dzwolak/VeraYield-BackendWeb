@@ -496,7 +496,7 @@ class AnalysisService extends EventEmitter {
 
         // Sprawdź, czy trailing stop jest włączony dla tej instancji
         const trailingStopEnabled =
-          config?.signals?.enableTrailingStop !== false;
+          config?.signals?.enableTrailingStop === true;
 
         // Jeśli trailing stop nie jest włączony, wyjdź wcześniej
         if (!trailingStopEnabled) {
