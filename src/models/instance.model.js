@@ -96,6 +96,22 @@ const InstanceSchema = new Schema({
           type: Number,
           default: 7200000, // 2h w milisekundach
         },
+        enableTrailingStop: {
+          type: Boolean,
+          default: true,
+        },
+        trailingStop: {
+          type: Number,
+          default: 0.02, // 2%
+        },
+        trailingStopDelay: {
+          type: Number,
+          default: 300000, // 5 minut w milisekundach
+        },
+        minFirstEntryDuration: {
+          type: Number,
+          default: 3600000, // 1 godzina w milisekundach
+        },
       },
       // Alokacja kapitału
       capitalAllocation: {

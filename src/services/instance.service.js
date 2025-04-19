@@ -136,7 +136,11 @@ class InstanceService {
             },
             signals: config.strategy?.parameters?.signals || {
               checkEMATrend: true,
-              minEntryTimeGap: 7200000,
+              minEntryTimeGap: 7200000, // 2 godziny w milisekundach
+              enableTrailingStop: true,
+              trailingStop: 0.02, // 2%
+              trailingStopDelay: 300000, // 5 minut w milisekundach
+              minFirstEntryDuration: 3600000, // 1 godzina w milisekundach
             },
             capitalAllocation: config.strategy?.parameters
               ?.capitalAllocation || {
@@ -216,6 +220,7 @@ class InstanceService {
         hurst: instance.strategy.parameters.hurst,
         ema: instance.strategy.parameters.ema,
         checkEMATrend: instance.strategy.parameters.signals.checkEMATrend,
+        signals: instance.strategy.parameters.signals, // Dodaj cały obiekt signals
       };
 
       // Uruchom analizę dla instancji
