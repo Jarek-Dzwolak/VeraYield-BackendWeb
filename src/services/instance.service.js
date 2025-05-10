@@ -112,40 +112,35 @@ class InstanceService {
         throw new Error(`Instancja o ID ${instanceId} już istnieje`);
       }
 
-      // Sprawdź, czy jest to tryb testowy
-      const isTestMode = config.testMode === true;
-
-      // Utwórz nową instancję w bazie danych
       // Utwórz nową instancję w bazie danych
       const instance = new Instance({
         instanceId,
         name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
         symbol: config.symbol,
         active: config.active !== false,
-        testMode: isTestMode,
+        testMode: config.testMode || false,
         strategy: {
           type: config.strategy?.type || "hurst",
-          parameters: {
-            hurst: config.strategy?.parameters?.hurst || {
+          parameters: config.strategy?.parameters || {
+            hurst: {
               interval: "15m",
               periods: 25,
               upperDeviationFactor: 2.0,
               lowerDeviationFactor: 2.0,
             },
-            ema: config.strategy?.parameters?.ema || {
+            ema: {
               interval: "1h",
               periods: 30,
             },
-            signals: config.strategy?.parameters?.signals || {
+            signals: {
               checkEMATrend: true,
-              minEntryTimeGap: 7200000, // 2 godziny w milisekundach
+              minEntryTimeGap: 7200000,
               enableTrailingStop: true,
-              trailingStop: 0.02, // 2%
-              trailingStopDelay: 300000, // 5 minut w milisekundach
-              minFirstEntryDuration: 3600000, // 1 godzina w milisekundach
+              trailingStop: 0.02,
+              trailingStopDelay: 300000,
+              minFirstEntryDuration: 3600000,
             },
-            capitalAllocation: config.strategy?.parameters
-              ?.capitalAllocation || {
+            capitalAllocation: {
               firstEntry: 0.1,
               secondEntry: 0.25,
               thirdEntry: 0.5,
@@ -155,51 +150,33 @@ class InstanceService {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      // Dla trybu testowego dodajemy przykładowe dane API i finansowe
-      if (isTestMode) {
-        // Dodaj przykładowe klucze API dla trybu testowego
-        instance.apiKeys = {
-          apiKey: "test_api_key",
-          apiSecret: "test_api_secret",
-        };
 
-        // Dodaj przykładowe dane finansowe dla trybu testowego z uwzględnieniem initialFunds
-        const initialFunds = config.initialFunds || 1000; // Używamy przekazanej wartości lub domyślnej 1000
+      // Inicjalizuj dane finansowe dla KAŻDEJ instancji
+      const initialFunds = config.initialFunds || 0;
+      instance.financials = {
+        allocatedCapital: initialFunds,
+        currentBalance: initialFunds,
+        availableBalance: initialFunds,
+        lockedBalance: 0,
+        totalProfit: 0,
+        userId: config.userId || "000000000000000000000000",
+        openPositions: [],
+        closedPositions: [],
+      };
 
-        instance.financials = {
-          allocatedCapital: initialFunds,
-          currentBalance: initialFunds,
-          availableBalance: initialFunds,
-          lockedBalance: 0,
-          totalProfit: 0,
-          userId: "000000000000000000000000", // Fikcyjny ID użytkownika
-          openPositions: [],
-          closedPositions: [],
-        };
-
-        logger.info(
-          `Inicjalizacja instancji testowej ${instanceId} z ${initialFunds} środków`
-        );
-        if (!isTestMode) {
-          instance.financials = {
-            allocatedCapital: 0,
-            currentBalance: 0,
-            availableBalance: 0,
-            lockedBalance: 0,
-            totalProfit: 0,
-            userId: "000000000000000000000000",
-            openPositions: [],
-            closedPositions: [],
-          };
-        }
+      // Ustaw konfigurację ByBit jeśli została przekazana
+      if (config.bybitConfig) {
+        instance.bybitConfig = config.bybitConfig;
       }
+
       await instance.save();
 
       // Jeśli instancja ma być aktywna, uruchom ją
       if (instance.active) {
         await this.startInstance(instanceId);
       }
-      // Automatyczna synchronizacja jeśli mamy klucze ByBit
+
+      // Automatyczna synchronizacja salda jeśli mamy klucze ByBit i nie jest to tryb testowy
       if (instance.bybitConfig?.apiKey && !instance.testMode) {
         setTimeout(async () => {
           try {
@@ -214,6 +191,7 @@ class InstanceService {
           }
         }, 3000);
       }
+
       logger.info(`Utworzono nową instancję: ${instance.name} (${instanceId})`);
       return instance;
     } catch (error) {

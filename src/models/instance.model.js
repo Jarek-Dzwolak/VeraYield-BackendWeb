@@ -279,10 +279,6 @@ const InstanceSchema = new Schema({
       enum: ["isolated", "cross"],
       default: "isolated",
     },
-    testnet: {
-      type: Boolean,
-      default: true,
-    },
   },
 });
 
