@@ -14,6 +14,7 @@ const logger = require("../utils/logger");
 const { EventEmitter } = require("events");
 const Signal = require("../models/signal.model");
 const Instance = require("../models/instance.model");
+const instanceService = require("./instance.service");
 
 class SignalService extends EventEmitter {
   constructor() {
@@ -135,6 +136,7 @@ class SignalService extends EventEmitter {
             allocationAmount,
             signal._id
           );
+
           // Wystaw prawdziwe zlecenie na ByBit
           if (instance.bybitConfig && instance.bybitConfig.apiKey) {
             try {
@@ -187,6 +189,7 @@ class SignalService extends EventEmitter {
               // Kontynuuj działanie bota nawet jeśli zlecenie się nie powiedzie
             }
           }
+
           // Utwórz nową pozycję w pamięci
           const newPosition = {
             instanceId,
@@ -216,8 +219,10 @@ class SignalService extends EventEmitter {
 
           // Zapisz czas ostatniego wejścia
           this.lastEntryTimes.set(instanceId, timestamp);
+
           // Reset Trailing stopa
           analysisService.resetTrailingStopTracking(instanceId);
+
           // Emituj zdarzenie
           this.emit("newPosition", newPosition);
 
@@ -324,6 +329,7 @@ class SignalService extends EventEmitter {
             allocationAmount,
             signal._id
           );
+
           // Wystaw prawdziwe zlecenie na ByBit
           if (instance.bybitConfig && instance.bybitConfig.apiKey) {
             try {
@@ -376,6 +382,7 @@ class SignalService extends EventEmitter {
               // Kontynuuj działanie bota nawet jeśli zlecenie się nie powiedzie
             }
           }
+
           // Dodaj nowe wejście do pozycji
           currentPosition.entries.push({
             time: timestamp,
@@ -453,19 +460,20 @@ class SignalService extends EventEmitter {
         );
         return;
       }
+
       // Sprawdź minimalny czas trwania pierwszego wejścia (tylko jeśli mamy jedno wejście)
       const entryCount = currentPosition.entries.length;
       if (entryCount === 1) {
         // Pobierz instancję, aby uzyskać dostęp do konfiguracji
-        const instance = await Instance.findOne({ instanceId });
-        if (!instance) {
+        const instanceForTimeCheck = await Instance.findOne({ instanceId });
+        if (!instanceForTimeCheck) {
           logger.error(`Nie znaleziono instancji ${instanceId} w bazie danych`);
           // Kontynuuj bez sprawdzania czasu, żeby nie blokować całkowicie
         } else {
           // Pobierz minimalny czas trwania pierwszego wejścia (domyślnie 1 godzina)
           const minFirstEntryDuration =
-            instance.strategy.parameters.signals?.minFirstEntryDuration ||
-            60 * 60 * 1000;
+            instanceForTimeCheck.strategy.parameters.signals
+              ?.minFirstEntryDuration || 60 * 60 * 1000;
 
           // Oblicz czas trwania pozycji
           const positionDuration = timestamp - currentPosition.entryTime;
@@ -479,6 +487,7 @@ class SignalService extends EventEmitter {
           }
         }
       }
+
       // Sprawdź, czy pozycja ma prawidłowe positionId
       if (positionId && currentPosition.positionId !== positionId) {
         logger.warn(
@@ -542,9 +551,14 @@ class SignalService extends EventEmitter {
           totalEntryAmount,
           exitAmount
         );
+
         // Zamknij prawdziwą pozycję na ByBit
-        const instance = await Instance.findOne({ instanceId });
-        if (instance && instance.bybitConfig && instance.bybitConfig.apiKey) {
+        const instanceForExit = await Instance.findOne({ instanceId });
+        if (
+          instanceForExit &&
+          instanceForExit.bybitConfig &&
+          instanceForExit.bybitConfig.apiKey
+        ) {
           try {
             // Oblicz łączną wielkość pozycji do zamknięcia
             let totalContractQuantity = 0;
@@ -566,18 +580,18 @@ class SignalService extends EventEmitter {
             // Jeśli nie mamy zapisanej wielkości, oblicz ją
             if (totalContractQuantity === 0) {
               const currentPrice = await bybitService.getCurrentPrice(
-                instance.symbol
+                instanceForExit.symbol
               );
               const positionValue =
-                totalEntryAmount * instance.bybitConfig.leverage;
+                totalEntryAmount * instanceForExit.bybitConfig.leverage;
               totalContractQuantity = (positionValue / currentPrice).toFixed(3);
             }
 
             // Zamknij pozycję
             const orderResult = await bybitService.closePosition(
-              instance.bybitConfig.apiKey,
-              instance.bybitConfig.apiSecret,
-              instance.symbol,
+              instanceForExit.bybitConfig.apiKey,
+              instanceForExit.bybitConfig.apiSecret,
+              instanceForExit.symbol,
               "Buy", // Strona początkowej pozycji
               totalContractQuantity.toString(),
               1 // One-way mode
@@ -596,6 +610,7 @@ class SignalService extends EventEmitter {
             logger.error(`Error closing ByBit position: ${error.message}`);
           }
         }
+
         // Zaktualizuj pozycję w pamięci
         currentPosition.exitTime = timestamp;
         currentPosition.exitPrice = price;
@@ -625,6 +640,30 @@ class SignalService extends EventEmitter {
         logger.info(
           `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)}, typ: ${type})`
         );
+
+        // Synchronizuj saldo po zamknięciu pozycji
+        const instanceForSync = await Instance.findOne({ instanceId });
+        if (
+          instanceForSync &&
+          instanceForSync.bybitConfig &&
+          instanceForSync.bybitConfig.apiKey &&
+          !instanceForSync.testMode
+        ) {
+          logger.info(
+            `Synchronizacja salda po zamknięciu pozycji dla instancji ${instanceId}...`
+          );
+
+          // Poczekaj chwilę aby ByBit zaktualizował saldo
+          setTimeout(async () => {
+            try {
+              await instanceService.syncInstanceBalance(instanceId);
+            } catch (error) {
+              logger.error(
+                `Błąd podczas synchronizacji salda po zamknięciu pozycji: ${error.message}`
+              );
+            }
+          }, 2000); // 2 sekundy opóźnienia
+        }
 
         return exitSignal;
       } catch (error) {

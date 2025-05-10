@@ -12,6 +12,7 @@ const signalService = require("../services/signal.service");
 const logger = require("../utils/logger");
 const { v4: uuidv4 } = require("uuid");
 const { validateInstanceParams } = require("../config/instance.config");
+const Instance = require("../models/instance.model"); // Dodany brakujący import
 
 /**
  * Pobiera wszystkie instancje
@@ -644,6 +645,49 @@ const updateBybitConfig = async (req, res) => {
   }
 };
 
+/**
+ * Synchronizuje saldo instancji z ByBit
+ */
+const syncInstanceBalance = async (req, res) => {
+  try {
+    const { instanceId } = req.params;
+
+    // Sprawdź czy instancja istnieje
+    const instance = await instanceService.getInstance(instanceId);
+    if (!instance) {
+      return res.status(404).json({
+        error: "Not Found",
+        message: "Instance not found",
+      });
+    }
+
+    // Wykonaj synchronizację
+    const success = await instanceService.syncInstanceBalance(instanceId);
+
+    if (success) {
+      // Pobierz zaktualizowaną instancję
+      const updatedInstance = await instanceService.getInstance(instanceId);
+
+      res.json({
+        message: "Saldo zsynchronizowane pomyślnie",
+        financials: updatedInstance.financials,
+      });
+    } else {
+      res.status(400).json({
+        error: "Sync Failed",
+        message:
+          "Nie udało się zsynchronizować salda. Sprawdź konfigurację ByBit.",
+      });
+    }
+  } catch (error) {
+    logger.error(`Błąd podczas synchronizacji salda: ${error.message}`);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An error occurred while syncing balance",
+    });
+  }
+};
+
 module.exports = {
   getAllInstances,
   getActiveInstances,
@@ -661,4 +705,5 @@ module.exports = {
   compareInstances,
   stopAllInstances,
   updateBybitConfig,
+  syncInstanceBalance,
 };

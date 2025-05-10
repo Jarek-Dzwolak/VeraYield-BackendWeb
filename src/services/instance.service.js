@@ -12,6 +12,8 @@ const analysisService = require("./analysis.service");
 const signalService = require("./signal.service");
 const logger = require("../utils/logger");
 const { v4: uuidv4 } = require("uuid");
+const bybitService = require("./bybit.service");
+const Signal = require("../models/signal.model");
 
 class InstanceService {
   constructor() {
@@ -213,7 +215,17 @@ class InstanceService {
         logger.warn(`Instancja ${instanceId} jest już uruchomiona`);
         return true;
       }
-
+      // Synchronizuj saldo z ByBit przy pierwszym uruchomieniu
+      if (
+        instance.bybitConfig &&
+        instance.bybitConfig.apiKey &&
+        !instance.testMode
+      ) {
+        logger.info(
+          `Synchronizacja salda ByBit dla instancji ${instanceId}...`
+        );
+        await this.syncInstanceBalance(instanceId);
+      }
       // Przygotuj konfigurację dla serwisu analizy
       const analysisConfig = {
         symbol: instance.symbol,
@@ -465,6 +477,77 @@ class InstanceService {
     }
 
     logger.info("Zatrzymano wszystkie instancje");
+  }
+  /**
+   * Synchronizuje saldo instancji z ByBit
+   * @param {string} instanceId - ID instancji
+   * @returns {Promise<boolean>} - Czy synchronizacja się powiodła
+   */
+  async syncInstanceBalance(instanceId) {
+    try {
+      const instance = await Instance.findOne({ instanceId });
+
+      if (!instance || !instance.bybitConfig?.apiKey || instance.testMode) {
+        logger.debug(
+          `Pomijam synchronizację salda dla instancji ${instanceId} (brak konfiguracji ByBit lub tryb testowy)`
+        );
+        return false;
+      }
+
+      logger.info(
+        `Rozpoczynam synchronizację salda dla instancji ${instanceId}...`
+      );
+
+      const balanceData = await bybitService.getBalance(
+        instance.bybitConfig.apiKey,
+        instance.bybitConfig.apiSecret
+      );
+
+      // Znajdź saldo USDT
+      const usdtBalance = balanceData.result?.list?.[0]?.coin?.find(
+        (coin) => coin.coin === "USDT"
+      );
+
+      if (usdtBalance) {
+        const availableBalance = parseFloat(
+          usdtBalance.availableToWithdraw || usdtBalance.walletBalance
+        );
+
+        // Inicjalizuj financials jeśli nie istnieje
+        if (!instance.financials) {
+          instance.financials = {
+            allocatedCapital: 0,
+            currentBalance: 0,
+            availableBalance: 0,
+            lockedBalance: 0,
+            totalProfit: 0,
+            openPositions: [],
+            closedPositions: [],
+          };
+        }
+
+        // Zaktualizuj saldo zachowując zablokowane środki
+        const lockedBalance = instance.financials.lockedBalance || 0;
+        instance.financials.availableBalance = availableBalance - lockedBalance;
+        instance.financials.currentBalance = availableBalance;
+        instance.financials.allocatedCapital = availableBalance;
+
+        await instance.save();
+
+        logger.info(
+          `Zsynchronizowano saldo dla instancji ${instanceId}: ${availableBalance} USDT (dostępne: ${instance.financials.availableBalance})`
+        );
+        return true;
+      }
+
+      logger.warn(`Nie znaleziono salda USDT dla instancji ${instanceId}`);
+      return false;
+    } catch (error) {
+      logger.error(
+        `Błąd synchronizacji salda dla ${instanceId}: ${error.message}`
+      );
+      return false;
+    }
   }
 }
 

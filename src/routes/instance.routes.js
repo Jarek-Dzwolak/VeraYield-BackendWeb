@@ -80,5 +80,9 @@ router.post(
   instanceController.stopAllInstances
 );
 router.put("/:instanceId/bybit-config", instanceController.updateBybitConfig);
+router.post(
+  "/:instanceId/sync-balance",
+  instanceController.syncInstanceBalance
+);
 
 module.exports = router;
