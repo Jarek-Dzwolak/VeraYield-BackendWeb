@@ -257,6 +257,33 @@ const InstanceSchema = new Schema({
     type: Boolean,
     default: false,
   },
+  bybitConfig: {
+    apiKey: {
+      type: String,
+      default: "",
+    },
+    apiSecret: {
+      type: String,
+      default: "",
+    },
+    subaccountId: {
+      type: String,
+      default: "",
+    },
+    leverage: {
+      type: Number,
+      default: 3,
+    },
+    marginMode: {
+      type: String,
+      enum: ["isolated", "cross"],
+      default: "isolated",
+    },
+    testnet: {
+      type: Boolean,
+      default: true,
+    },
+  },
 });
 
 // Metoda do uzyskania identyfikatora

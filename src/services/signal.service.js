@@ -7,7 +7,7 @@
  * - Przechowywanie sygnałów w bazie danych
  * - Współpracę z AccountService w zakresie zarządzania środkami
  */
-
+const bybitService = require("./bybit.service");
 const analysisService = require("./analysis.service");
 const accountService = require("./account.service");
 const logger = require("../utils/logger");
@@ -135,7 +135,58 @@ class SignalService extends EventEmitter {
             allocationAmount,
             signal._id
           );
+          // Wystaw prawdziwe zlecenie na ByBit
+          if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+            try {
+              // Oblicz wielkość zlecenia w kontraktach
+              const currentPrice = await bybitService.getCurrentPrice(
+                instance.symbol
+              );
+              const positionValue =
+                allocationAmount * instance.bybitConfig.leverage;
+              const contractQuantity = (positionValue / currentPrice).toFixed(
+                3
+              );
 
+              // Ustaw dźwignię i margin mode (tylko przy pierwszym wejściu)
+              if (!currentPosition) {
+                await bybitService.setLeverage(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  instance.bybitConfig.leverage
+                );
+
+                await bybitService.setMarginMode(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  instance.bybitConfig.marginMode === "isolated" ? 1 : 0
+                );
+              }
+
+              // Otwórz pozycję
+              const orderResult = await bybitService.openPosition(
+                instance.bybitConfig.apiKey,
+                instance.bybitConfig.apiSecret,
+                instance.symbol,
+                "Buy", // Dla strategii long
+                contractQuantity,
+                1 // One-way mode
+              );
+
+              logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
+
+              // Zapisz ID zlecenia w metadanych sygnału
+              signal.metadata.bybitOrderId = orderResult.result.orderId;
+              signal.metadata.bybitOrderLinkId = orderResult.result.orderLinkId;
+              signal.metadata.contractQuantity = contractQuantity;
+              await signal.save();
+            } catch (error) {
+              logger.error(`Error placing ByBit order: ${error.message}`);
+              // Kontynuuj działanie bota nawet jeśli zlecenie się nie powiedzie
+            }
+          }
           // Utwórz nową pozycję w pamięci
           const newPosition = {
             instanceId,
@@ -273,7 +324,58 @@ class SignalService extends EventEmitter {
             allocationAmount,
             signal._id
           );
+          // Wystaw prawdziwe zlecenie na ByBit
+          if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+            try {
+              // Oblicz wielkość zlecenia w kontraktach
+              const currentPrice = await bybitService.getCurrentPrice(
+                instance.symbol
+              );
+              const positionValue =
+                allocationAmount * instance.bybitConfig.leverage;
+              const contractQuantity = (positionValue / currentPrice).toFixed(
+                3
+              );
 
+              // Ustaw dźwignię i margin mode (tylko przy pierwszym wejściu)
+              if (!currentPosition) {
+                await bybitService.setLeverage(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  instance.bybitConfig.leverage
+                );
+
+                await bybitService.setMarginMode(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  instance.bybitConfig.marginMode === "isolated" ? 1 : 0
+                );
+              }
+
+              // Otwórz pozycję
+              const orderResult = await bybitService.openPosition(
+                instance.bybitConfig.apiKey,
+                instance.bybitConfig.apiSecret,
+                instance.symbol,
+                "Buy", // Dla strategii long
+                contractQuantity,
+                1 // One-way mode
+              );
+
+              logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
+
+              // Zapisz ID zlecenia w metadanych sygnału
+              signal.metadata.bybitOrderId = orderResult.result.orderId;
+              signal.metadata.bybitOrderLinkId = orderResult.result.orderLinkId;
+              signal.metadata.contractQuantity = contractQuantity;
+              await signal.save();
+            } catch (error) {
+              logger.error(`Error placing ByBit order: ${error.message}`);
+              // Kontynuuj działanie bota nawet jeśli zlecenie się nie powiedzie
+            }
+          }
           // Dodaj nowe wejście do pozycji
           currentPosition.entries.push({
             time: timestamp,
@@ -440,7 +542,60 @@ class SignalService extends EventEmitter {
           totalEntryAmount,
           exitAmount
         );
+        // Zamknij prawdziwą pozycję na ByBit
+        const instance = await Instance.findOne({ instanceId });
+        if (instance && instance.bybitConfig && instance.bybitConfig.apiKey) {
+          try {
+            // Oblicz łączną wielkość pozycji do zamknięcia
+            let totalContractQuantity = 0;
 
+            // Zbierz wszystkie wielkości z sygnałów wejścia
+            for (const entry of currentPosition.entries) {
+              const entrySignal = await Signal.findById(entry.signalId);
+              if (
+                entrySignal &&
+                entrySignal.metadata &&
+                entrySignal.metadata.contractQuantity
+              ) {
+                totalContractQuantity += parseFloat(
+                  entrySignal.metadata.contractQuantity
+                );
+              }
+            }
+
+            // Jeśli nie mamy zapisanej wielkości, oblicz ją
+            if (totalContractQuantity === 0) {
+              const currentPrice = await bybitService.getCurrentPrice(
+                instance.symbol
+              );
+              const positionValue =
+                totalEntryAmount * instance.bybitConfig.leverage;
+              totalContractQuantity = (positionValue / currentPrice).toFixed(3);
+            }
+
+            // Zamknij pozycję
+            const orderResult = await bybitService.closePosition(
+              instance.bybitConfig.apiKey,
+              instance.bybitConfig.apiSecret,
+              instance.symbol,
+              "Buy", // Strona początkowej pozycji
+              totalContractQuantity.toString(),
+              1 // One-way mode
+            );
+
+            logger.info(
+              `ByBit position closed: ${JSON.stringify(orderResult)}`
+            );
+
+            // Zapisz ID zlecenia zamykającego
+            exitSignal.metadata.bybitOrderId = orderResult.result.orderId;
+            exitSignal.metadata.bybitOrderLinkId =
+              orderResult.result.orderLinkId;
+            await exitSignal.save();
+          } catch (error) {
+            logger.error(`Error closing ByBit position: ${error.message}`);
+          }
+        }
         // Zaktualizuj pozycję w pamięci
         currentPosition.exitTime = timestamp;
         currentPosition.exitPrice = price;

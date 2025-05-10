@@ -79,5 +79,6 @@ router.post(
   authMiddleware.isAdmin,
   instanceController.stopAllInstances
 );
+router.put("/:instanceId/bybit-config", instanceController.updateBybitConfig);
 
 module.exports = router;

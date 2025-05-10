@@ -97,7 +97,15 @@ const getInstance = async (req, res) => {
  */
 const createInstance = async (req, res) => {
   try {
-    const { symbol, name, strategy, active, initialFunds, testMode } = req.body;
+    const {
+      symbol,
+      name,
+      strategy,
+      active,
+      initialFunds,
+      testMode,
+      bybitConfig,
+    } = req.body;
 
     // Przygotuj konfigurację instancji
     const config = {
@@ -108,6 +116,7 @@ const createInstance = async (req, res) => {
       initialFunds, // Dodanie obsługi początkowych środków
       testMode, // Dodaj flagę testMode z formularza
       instanceId: uuidv4(), // Generuj nowy UUID
+      bybitConfig: bybitConfig || {}, // Dodaj konfigurację ByBit
     };
 
     // Utwórz instancję
@@ -590,6 +599,51 @@ const stopAllInstances = async (req, res) => {
   }
 };
 
+/**
+ * Aktualizuje konfigurację ByBit dla instancji
+ */
+const updateBybitConfig = async (req, res) => {
+  try {
+    const { instanceId } = req.params;
+    const { apiKey, apiSecret, leverage, marginMode, testnet } = req.body;
+
+    const instance = await Instance.findOne({ instanceId });
+
+    if (!instance) {
+      return res.status(404).json({
+        error: "Not Found",
+        message: "Instance not found",
+      });
+    }
+
+    // Aktualizuj konfigurację ByBit
+    instance.bybitConfig = {
+      apiKey,
+      apiSecret,
+      leverage: leverage || 3,
+      marginMode: marginMode || "isolated",
+      testnet: testnet !== false,
+    };
+
+    await instance.save();
+
+    res.json({
+      message: "ByBit configuration updated successfully",
+      instanceId,
+      bybitConfig: {
+        ...instance.bybitConfig,
+        apiSecret: "***", // Nie zwracaj sekretu w odpowiedzi
+      },
+    });
+  } catch (error) {
+    logger.error(`Error updating ByBit config: ${error.message}`);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An error occurred while updating ByBit configuration",
+    });
+  }
+};
+
 module.exports = {
   getAllInstances,
   getActiveInstances,
@@ -606,4 +660,5 @@ module.exports = {
   cloneInstance,
   compareInstances,
   stopAllInstances,
+  updateBybitConfig,
 };
