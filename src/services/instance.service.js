@@ -180,6 +180,18 @@ class InstanceService {
         logger.info(
           `Inicjalizacja instancji testowej ${instanceId} z ${initialFunds} środków`
         );
+        if (!isTestMode) {
+          instance.financials = {
+            allocatedCapital: 0,
+            currentBalance: 0,
+            availableBalance: 0,
+            lockedBalance: 0,
+            totalProfit: 0,
+            userId: "000000000000000000000000",
+            openPositions: [],
+            closedPositions: [],
+          };
+        }
       }
       await instance.save();
 
@@ -187,7 +199,21 @@ class InstanceService {
       if (instance.active) {
         await this.startInstance(instanceId);
       }
-
+      // Automatyczna synchronizacja jeśli mamy klucze ByBit
+      if (instance.bybitConfig?.apiKey && !instance.testMode) {
+        setTimeout(async () => {
+          try {
+            await this.syncInstanceBalance(instanceId);
+            logger.info(
+              `Automatyczna synchronizacja salda dla nowej instancji ${instanceId}`
+            );
+          } catch (error) {
+            logger.error(
+              `Błąd automatycznej synchronizacji salda: ${error.message}`
+            );
+          }
+        }, 3000);
+      }
       logger.info(`Utworzono nową instancję: ${instance.name} (${instanceId})`);
       return instance;
     } catch (error) {
