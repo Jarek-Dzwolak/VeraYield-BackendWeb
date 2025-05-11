@@ -102,130 +102,90 @@ class ByBitService {
     return this.makeRequest("GET", "/v5/account/info", apiKey, apiSecret, {});
   }
 
-  // I zmodyfikuj getBalance:
-  async getSubAccountBalance(apiKey, apiSecret, subUid) {
-    console.log("=== TRYING SUB-ACCOUNT BALANCE ===");
-    console.log("Sub UID:", subUid);
-
-    return this.makeRequest(
-      "GET",
-      "/v5/asset/transfer/query-sub-member-list",
-      apiKey,
-      apiSecret,
-      {}
-    );
-  }
-
   async getBalance(apiKey, apiSecret, subUid = null) {
-    if (subUid) {
-      try {
-        console.log("=== TRYING SUB-ACCOUNT ENDPOINTS ===");
-
-        const subAccountInfo = await this.getSubAccountBalance(
-          apiKey,
-          apiSecret,
-          subUid
-        );
-        console.log(
-          "Sub-account info:",
-          JSON.stringify(subAccountInfo, null, 2)
-        );
-
-        const transferableBalance = await this.makeRequest(
-          "GET",
-          "/v5/asset/transfer/query-asset-info",
-          apiKey,
-          apiSecret,
-          {
-            accountType: "UNIFIED",
-            coin: "USDT",
-          }
-        );
-        console.log(
-          "Transferable balance:",
-          JSON.stringify(transferableBalance, null, 2)
-        );
-      } catch (error) {
-        console.log("Sub-account endpoints failed:", error.message);
-      }
-    }
-
     try {
-      console.log("=== TRYING WALLET BALANCE ===");
+      console.log("=== GETTING BALANCE ===");
+      console.log(
+        "Using endpoint: /v5/asset/transfer/query-account-coins-balance"
+      );
+
+      // Używamy właściwego endpointu z dokumentacji
       const response = await this.makeRequest(
         "GET",
-        "/v5/account/wallet-balance",
+        "/v5/asset/transfer/query-account-coins-balance",
         apiKey,
         apiSecret,
         {
           accountType: "UNIFIED",
+          coin: "USDT", // Możemy też nie podawać, żeby dostać wszystkie
+          memberId: subUid || undefined, // Dodajemy memberId jeśli mamy subUid
         }
       );
 
-      if (response.result?.list?.[0]?.coin?.length > 0) {
-        return response;
-      }
+      console.log("Balance response:", JSON.stringify(response, null, 2));
 
-      console.log("No coin data in wallet balance, trying other endpoints...");
-    } catch (error) {
-      console.log("Wallet balance failed:", error.message);
-    }
-
-    try {
-      console.log("=== TRYING ACCOUNT INFO ===");
-      const accountInfo = await this.getAccountInfo(apiKey, apiSecret);
-      console.log(
-        "Account info response:",
-        JSON.stringify(accountInfo, null, 2)
-      );
-    } catch (error) {
-      console.log("Account info failed:", error.message);
-    }
-
-    try {
-      console.log("=== TRYING POSITION LIST ===");
-      const positions = await this.makeRequest(
-        "GET",
-        "/v5/position/list",
-        apiKey,
-        apiSecret,
-        {
-          category: "linear",
-          settleCoin: "USDT",
-        }
-      );
-
-      console.log("Positions response:", JSON.stringify(positions, null, 2));
-
-      if (positions.result?.list?.length > 0) {
-        const firstPosition = positions.result.list[0];
-
+      if (response.result?.balance?.length > 0) {
+        // Przekształcamy odpowiedź do formatu, którego oczekuje reszta aplikacji
         return {
           retCode: 0,
           result: {
             list: [
               {
                 accountType: "UNIFIED",
-                coin: [
-                  {
-                    coin: "USDT",
-                    walletBalance:
-                      firstPosition.walletBalance ||
-                      firstPosition.positionBalance ||
-                      "0",
-                    availableToWithdraw: firstPosition.availableBalance || "0",
-                  },
-                ],
+                coin: response.result.balance.map((b) => ({
+                  coin: b.coin,
+                  walletBalance: b.walletBalance,
+                  availableToWithdraw: b.transferBalance,
+                })),
+              },
+            ],
+          },
+        };
+      }
+
+      // Jeśli UNIFIED nie zwróciło danych, spróbuj FUND
+      const fundResponse = await this.makeRequest(
+        "GET",
+        "/v5/asset/transfer/query-account-coins-balance",
+        apiKey,
+        apiSecret,
+        {
+          accountType: "FUND",
+          coin: "USDT",
+          memberId: subUid || undefined,
+        }
+      );
+
+      console.log("FUND response:", JSON.stringify(fundResponse, null, 2));
+
+      if (fundResponse.result?.balance?.length > 0) {
+        return {
+          retCode: 0,
+          result: {
+            list: [
+              {
+                accountType: "FUND",
+                coin: fundResponse.result.balance.map((b) => ({
+                  coin: b.coin,
+                  walletBalance: b.walletBalance,
+                  availableToWithdraw: b.transferBalance,
+                })),
               },
             ],
           },
         };
       }
     } catch (error) {
-      console.log("Position list failed:", error.message);
+      console.log("Error getting balance:", error.message);
+      if (error.response?.data) {
+        console.log(
+          "Error response:",
+          JSON.stringify(error.response.data, null, 2)
+        );
+      }
     }
 
-    console.log("All endpoints failed, returning empty response");
+    // Jeśli wszystko zawiodło, zwróć pustą odpowiedź
     return {
       retCode: 0,
       result: {
