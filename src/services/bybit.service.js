@@ -104,98 +104,107 @@ class ByBitService {
 
   async getBalance(apiKey, apiSecret, subUid = null) {
     try {
-      console.log("=== GETTING BALANCE (USDT ONLY) ===");
-      console.log("Looking for subaccount UID:", subUid);
+      console.log("=== REAL-TIME BALANCE CHECK ===");
+      console.log("Time:", new Date().toISOString());
+      console.log("SubUID:", subUid);
 
-      // 1. Sprawdź wszystkie monety bez filtrowania
-      console.log("\n1. Checking all coins without filter...");
-      const allCoinsResponse = await this.makeRequest(
-        "GET",
-        "/v5/asset/transfer/query-account-coins-balance",
-        apiKey,
-        apiSecret,
-        {
-          accountType: "UNIFIED",
-          memberId: subUid || undefined,
-        }
-      );
-
-      console.log(
-        "All coins in UNIFIED:",
-        JSON.stringify(allCoinsResponse.result, null, 2)
-      );
-
-      // 2. Sprawdź różne typy kont
-      const accountTypes = ["UNIFIED", "FUND", "CONTRACT", "SPOT"];
-
-      for (const accountType of accountTypes) {
-        console.log(`\n2. Checking ${accountType} account...`);
-
-        try {
-          const response = await this.makeRequest(
-            "GET",
-            "/v5/asset/transfer/query-account-coins-balance",
-            apiKey,
-            apiSecret,
-            {
-              accountType: accountType,
-              coin: "USDT",
-              memberId: subUid || undefined,
-            }
-          );
-
-          console.log(
-            `${accountType} response:`,
-            JSON.stringify(response.result, null, 2)
-          );
-        } catch (err) {
-          console.log(`${accountType} error:`, err.message);
-        }
-      }
-
-      // 3. Spróbuj bez memberId (główne konto)
-      console.log("\n3. Checking without memberId (main account)...");
-      const mainAccountResponse = await this.makeRequest(
-        "GET",
-        "/v5/asset/transfer/query-account-coins-balance",
-        apiKey,
-        apiSecret,
-        {
-          accountType: "UNIFIED",
-          coin: "USDT",
-        }
-      );
-
-      console.log(
-        "Main account response:",
-        JSON.stringify(mainAccountResponse.result, null, 2)
-      );
-
-      // 4. Sprawdź starszy endpoint
-      console.log("\n4. Checking old wallet-balance endpoint...");
-      try {
-        const oldEndpointResponse = await this.makeRequest(
+      // Sprawdź oba konta jednocześnie
+      const [fundResult, unifiedResult] = await Promise.all([
+        // FUND account
+        this.makeRequest(
           "GET",
-          "/v5/account/wallet-balance",
+          "/v5/asset/transfer/query-account-coins-balance",
+          apiKey,
+          apiSecret,
+          {
+            accountType: "FUND",
+            coin: "USDT",
+            memberId: subUid || undefined,
+          }
+        ).catch((err) => ({ error: err.message })),
+
+        // UNIFIED account
+        this.makeRequest(
+          "GET",
+          "/v5/asset/transfer/query-account-coins-balance",
           apiKey,
           apiSecret,
           {
             accountType: "UNIFIED",
+            coin: "USDT",
+            memberId: subUid || undefined,
           }
-        );
+        ).catch((err) => ({ error: err.message })),
+      ]);
 
+      console.log("\nFUND Account:");
+      console.log(JSON.stringify(fundResult.result || fundResult, null, 2));
+
+      console.log("\nUNIFIED Account:");
+      console.log(
+        JSON.stringify(unifiedResult.result || unifiedResult, null, 2)
+      );
+
+      // Wybierz ten który ma środki
+      if (
+        unifiedResult.result?.balance?.[0]?.walletBalance &&
+        parseFloat(unifiedResult.result.balance[0].walletBalance) > 0
+      ) {
         console.log(
-          "Old endpoint response:",
-          JSON.stringify(oldEndpointResponse.result, null, 2)
+          "Using UNIFIED balance:",
+          unifiedResult.result.balance[0].walletBalance
         );
-      } catch (err) {
-        console.log("Old endpoint error:", err.message);
+        const balance = unifiedResult.result.balance[0];
+        return {
+          retCode: 0,
+          result: {
+            list: [
+              {
+                accountType: "UNIFIED",
+                coin: [
+                  {
+                    coin: "USDT",
+                    walletBalance: balance.walletBalance,
+                    availableToWithdraw: balance.transferBalance,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+
+      if (
+        fundResult.result?.balance?.[0]?.walletBalance &&
+        parseFloat(fundResult.result.balance[0].walletBalance) > 0
+      ) {
+        console.log(
+          "Using FUND balance:",
+          fundResult.result.balance[0].walletBalance
+        );
+        const balance = fundResult.result.balance[0];
+        return {
+          retCode: 0,
+          result: {
+            list: [
+              {
+                accountType: "FUND",
+                coin: [
+                  {
+                    coin: "USDT",
+                    walletBalance: balance.walletBalance,
+                    availableToWithdraw: balance.transferBalance,
+                  },
+                ],
+              },
+            ],
+          },
+        };
       }
     } catch (error) {
-      console.log("General error:", error.message);
+      console.log("Error:", error.message);
     }
 
-    // Zwróć cokolwiek znalazłeś
     return {
       retCode: 0,
       result: {
@@ -214,7 +223,6 @@ class ByBitService {
       },
     };
   }
-
   /**
    * Otwiera pozycję futures (Market Order)
    */
