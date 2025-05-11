@@ -147,7 +147,7 @@ class SignalService extends EventEmitter {
               const positionValue =
                 allocationAmount * instance.bybitConfig.leverage;
               const contractQuantity = (positionValue / currentPrice).toFixed(
-                3
+                6
               );
 
               // Ustaw dźwignię i margin mode (tylko przy pierwszym wejściu)
@@ -340,7 +340,7 @@ class SignalService extends EventEmitter {
               const positionValue =
                 allocationAmount * instance.bybitConfig.leverage;
               const contractQuantity = (positionValue / currentPrice).toFixed(
-                3
+                6
               );
 
               // Ustaw dźwignię i margin mode (tylko przy pierwszym wejściu)
@@ -584,7 +584,7 @@ class SignalService extends EventEmitter {
               );
               const positionValue =
                 totalEntryAmount * instanceForExit.bybitConfig.leverage;
-              totalContractQuantity = (positionValue / currentPrice).toFixed(3);
+              totalContractQuantity = (positionValue / currentPrice).toFixed(6);
             }
 
             // Zamknij pozycję
