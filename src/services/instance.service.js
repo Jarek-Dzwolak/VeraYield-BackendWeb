@@ -504,7 +504,8 @@ class InstanceService {
 
       const balanceData = await bybitService.getBalance(
         instance.bybitConfig.apiKey,
-        instance.bybitConfig.apiSecret
+        instance.bybitConfig.apiSecret,
+        instance.bybitConfig.subaccountId
       );
 
       // DODAJ SZCZEGÓŁOWE LOGOWANIE

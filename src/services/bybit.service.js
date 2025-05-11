@@ -103,7 +103,53 @@ class ByBitService {
   }
 
   // I zmodyfikuj getBalance:
-  async getBalance(apiKey, apiSecret) {
+  async getSubAccountBalance(apiKey, apiSecret, subUid) {
+    console.log("=== TRYING SUB-ACCOUNT BALANCE ===");
+    console.log("Sub UID:", subUid);
+
+    return this.makeRequest(
+      "GET",
+      "/v5/asset/transfer/query-sub-member-list",
+      apiKey,
+      apiSecret,
+      {}
+    );
+  }
+
+  async getBalance(apiKey, apiSecret, subUid = null) {
+    if (subUid) {
+      try {
+        console.log("=== TRYING SUB-ACCOUNT ENDPOINTS ===");
+
+        const subAccountInfo = await this.getSubAccountBalance(
+          apiKey,
+          apiSecret,
+          subUid
+        );
+        console.log(
+          "Sub-account info:",
+          JSON.stringify(subAccountInfo, null, 2)
+        );
+
+        const transferableBalance = await this.makeRequest(
+          "GET",
+          "/v5/asset/transfer/query-asset-info",
+          apiKey,
+          apiSecret,
+          {
+            accountType: "UNIFIED",
+            coin: "USDT",
+          }
+        );
+        console.log(
+          "Transferable balance:",
+          JSON.stringify(transferableBalance, null, 2)
+        );
+      } catch (error) {
+        console.log("Sub-account endpoints failed:", error.message);
+      }
+    }
+
     try {
       console.log("=== TRYING WALLET BALANCE ===");
       const response = await this.makeRequest(
@@ -116,7 +162,6 @@ class ByBitService {
         }
       );
 
-      // Sprawdź czy mamy faktyczne dane
       if (response.result?.list?.[0]?.coin?.length > 0) {
         return response;
       }
@@ -126,7 +171,6 @@ class ByBitService {
       console.log("Wallet balance failed:", error.message);
     }
 
-    // Spróbuj account info
     try {
       console.log("=== TRYING ACCOUNT INFO ===");
       const accountInfo = await this.getAccountInfo(apiKey, apiSecret);
@@ -138,7 +182,6 @@ class ByBitService {
       console.log("Account info failed:", error.message);
     }
 
-    // Spróbuj position list
     try {
       console.log("=== TRYING POSITION LIST ===");
       const positions = await this.makeRequest(
@@ -154,11 +197,9 @@ class ByBitService {
 
       console.log("Positions response:", JSON.stringify(positions, null, 2));
 
-      // Sprawdź czy są dane o saldzie w pozycjach
       if (positions.result?.list?.length > 0) {
         const firstPosition = positions.result.list[0];
 
-        // Niektóre dane mogą być w samej pozycji
         return {
           retCode: 0,
           result: {
@@ -184,7 +225,6 @@ class ByBitService {
       console.log("Position list failed:", error.message);
     }
 
-    // Jeśli wszystko zawiodło, zwróć pierwotną odpowiedź
     console.log("All endpoints failed, returning empty response");
     return {
       retCode: 0,
