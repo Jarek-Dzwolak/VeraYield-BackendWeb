@@ -20,7 +20,8 @@ class ByBitService {
   /**
    * Tworzy podpis dla żądania
    */
-  createSignature(apiSecret, params) {
+
+  createSignature(apiKey, apiSecret, params) {
     const timestamp = Date.now().toString();
     const recvWindow = "5000";
 
@@ -30,9 +31,8 @@ class ByBitService {
       .map((key) => `${key}=${params[key]}`)
       .join("&");
 
-    // Dla GET requestów: timestamp + apiKey + recvWindow + queryString
-    // NIE dodawaj apiKey do podpisu - to był błąd!
-    const signStr = timestamp + apiSecret + recvWindow + queryString;
+    // Dla ByBit API v5: timestamp + apiKey + recvWindow + queryString
+    const signStr = timestamp + apiKey + recvWindow + queryString;
 
     const sign = crypto
       .createHmac("sha256", apiSecret)
@@ -41,15 +41,19 @@ class ByBitService {
 
     return { sign, timestamp };
   }
+
   /**
    * Wykonuje żądanie do API ByBit
    */
-  /**
-   * Wykonuje żądanie do API ByBit
-   */
+
   async makeRequest(method, endpoint, apiKey, apiSecret, params = {}) {
     try {
-      const { sign, timestamp } = this.createSignature(apiSecret, params);
+      // Przekaż apiKey do createSignature
+      const { sign, timestamp } = this.createSignature(
+        apiKey,
+        apiSecret,
+        params
+      );
 
       const headers = {
         "X-BAPI-API-KEY": apiKey,
