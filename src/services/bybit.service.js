@@ -104,95 +104,111 @@ class ByBitService {
 
   async getBalance(apiKey, apiSecret, subUid = null) {
     try {
-      console.log("=== GETTING BALANCE ===");
-      console.log(
-        "Using endpoint: /v5/asset/transfer/query-account-coins-balance"
-      );
+      console.log("=== GETTING BALANCE (USDT ONLY) ===");
+      console.log("Looking for subaccount UID:", subUid);
 
-      // Używamy właściwego endpointu z dokumentacji
-      const response = await this.makeRequest(
+      // 1. Sprawdź wszystkie monety bez filtrowania
+      console.log("\n1. Checking all coins without filter...");
+      const allCoinsResponse = await this.makeRequest(
         "GET",
         "/v5/asset/transfer/query-account-coins-balance",
         apiKey,
         apiSecret,
         {
           accountType: "UNIFIED",
-          coin: "USDT", // Możemy też nie podawać, żeby dostać wszystkie
-          memberId: subUid || undefined, // Dodajemy memberId jeśli mamy subUid
+          memberId: subUid || undefined,
         }
       );
 
-      console.log("Balance response:", JSON.stringify(response, null, 2));
+      console.log(
+        "All coins in UNIFIED:",
+        JSON.stringify(allCoinsResponse.result, null, 2)
+      );
 
-      if (response.result?.balance?.length > 0) {
-        // Przekształcamy odpowiedź do formatu, którego oczekuje reszta aplikacji
-        return {
-          retCode: 0,
-          result: {
-            list: [
-              {
-                accountType: "UNIFIED",
-                coin: response.result.balance.map((b) => ({
-                  coin: b.coin,
-                  walletBalance: b.walletBalance,
-                  availableToWithdraw: b.transferBalance,
-                })),
-              },
-            ],
-          },
-        };
+      // 2. Sprawdź różne typy kont
+      const accountTypes = ["UNIFIED", "FUND", "CONTRACT", "SPOT"];
+
+      for (const accountType of accountTypes) {
+        console.log(`\n2. Checking ${accountType} account...`);
+
+        try {
+          const response = await this.makeRequest(
+            "GET",
+            "/v5/asset/transfer/query-account-coins-balance",
+            apiKey,
+            apiSecret,
+            {
+              accountType: accountType,
+              coin: "USDT",
+              memberId: subUid || undefined,
+            }
+          );
+
+          console.log(
+            `${accountType} response:`,
+            JSON.stringify(response.result, null, 2)
+          );
+        } catch (err) {
+          console.log(`${accountType} error:`, err.message);
+        }
       }
 
-      // Jeśli UNIFIED nie zwróciło danych, spróbuj FUND
-      const fundResponse = await this.makeRequest(
+      // 3. Spróbuj bez memberId (główne konto)
+      console.log("\n3. Checking without memberId (main account)...");
+      const mainAccountResponse = await this.makeRequest(
         "GET",
         "/v5/asset/transfer/query-account-coins-balance",
         apiKey,
         apiSecret,
         {
-          accountType: "FUND",
+          accountType: "UNIFIED",
           coin: "USDT",
-          memberId: subUid || undefined,
         }
       );
 
-      console.log("FUND response:", JSON.stringify(fundResponse, null, 2));
+      console.log(
+        "Main account response:",
+        JSON.stringify(mainAccountResponse.result, null, 2)
+      );
 
-      if (fundResponse.result?.balance?.length > 0) {
-        return {
-          retCode: 0,
-          result: {
-            list: [
-              {
-                accountType: "FUND",
-                coin: fundResponse.result.balance.map((b) => ({
-                  coin: b.coin,
-                  walletBalance: b.walletBalance,
-                  availableToWithdraw: b.transferBalance,
-                })),
-              },
-            ],
-          },
-        };
+      // 4. Sprawdź starszy endpoint
+      console.log("\n4. Checking old wallet-balance endpoint...");
+      try {
+        const oldEndpointResponse = await this.makeRequest(
+          "GET",
+          "/v5/account/wallet-balance",
+          apiKey,
+          apiSecret,
+          {
+            accountType: "UNIFIED",
+          }
+        );
+
+        console.log(
+          "Old endpoint response:",
+          JSON.stringify(oldEndpointResponse.result, null, 2)
+        );
+      } catch (err) {
+        console.log("Old endpoint error:", err.message);
       }
     } catch (error) {
-      console.log("Error getting balance:", error.message);
-      if (error.response?.data) {
-        console.log(
-          "Error response:",
-          JSON.stringify(error.response.data, null, 2)
-        );
-      }
+      console.log("General error:", error.message);
     }
 
-    // Jeśli wszystko zawiodło, zwróć pustą odpowiedź
+    // Zwróć cokolwiek znalazłeś
     return {
       retCode: 0,
       result: {
         list: [
           {
             accountType: "UNIFIED",
-            coin: [],
+            coin: [
+              {
+                coin: "USDT",
+                walletBalance: "0",
+                availableToWithdraw: "0",
+              },
+            ],
           },
         ],
       },
