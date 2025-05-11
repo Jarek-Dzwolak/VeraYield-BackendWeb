@@ -17,14 +17,23 @@ class ByBitService {
   /**
    * Tworzy podpis dla żądania
    */
+  /**
+   * Tworzy podpis dla żądania
+   */
   createSignature(apiSecret, params) {
     const timestamp = Date.now().toString();
+    const recvWindow = "5000";
+
+    // Sortuj parametry i utwórz query string
     const queryString = Object.keys(params)
       .sort()
       .map((key) => `${key}=${params[key]}`)
       .join("&");
 
-    const signStr = timestamp + apiSecret + "5000" + queryString;
+    // Dla GET requestów: timestamp + apiKey + recvWindow + queryString
+    // NIE dodawaj apiKey do podpisu - to był błąd!
+    const signStr = timestamp + apiSecret + recvWindow + queryString;
+
     const sign = crypto
       .createHmac("sha256", apiSecret)
       .update(signStr)
@@ -32,7 +41,9 @@ class ByBitService {
 
     return { sign, timestamp };
   }
-
+  /**
+   * Wykonuje żądanie do API ByBit
+   */
   /**
    * Wykonuje żądanie do API ByBit
    */
@@ -48,22 +59,36 @@ class ByBitService {
         "Content-Type": "application/json",
       };
 
-      const config = {
+      let config = {
         method,
         url: `${this.baseUrl}${endpoint}`,
         headers,
-        data: method === "POST" ? params : undefined,
-        params: method === "GET" ? params : undefined,
       };
+
+      // Dla GET requestów parametry idą w URL
+      if (method === "GET") {
+        const queryString = Object.keys(params)
+          .map((key) => `${key}=${encodeURIComponent(params[key])}`)
+          .join("&");
+
+        if (queryString) {
+          config.url += `?${queryString}`;
+        }
+      } else {
+        // Dla POST requestów parametry idą w body
+        config.data = params;
+      }
 
       const response = await axios(config);
       return response.data;
     } catch (error) {
       logger.error(`ByBit API error: ${error.message}`);
+      if (error.response?.data) {
+        logger.error(`ByBit response: ${JSON.stringify(error.response.data)}`);
+      }
       throw error;
     }
   }
-
   /**
    * Pobiera saldo konta
    */
