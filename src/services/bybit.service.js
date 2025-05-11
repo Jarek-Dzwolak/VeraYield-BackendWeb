@@ -75,7 +75,6 @@ class ByBitService {
       apiSecret,
       {
         accountType: "UNIFIED",
-        coin: "USDT",
       }
     );
   }

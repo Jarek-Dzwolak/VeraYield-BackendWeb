@@ -507,15 +507,49 @@ class InstanceService {
         instance.bybitConfig.apiSecret
       );
 
+      // DODAJ SZCZEGÓŁOWE LOGOWANIE
+      console.log("=== PEŁNA ODPOWIEDŹ BYBIT API ===");
+      console.log(JSON.stringify(balanceData, null, 2));
+      console.log("===============================");
+
+      // Sprawdź czy dostaliśmy prawidłową odpowiedź
+      if (balanceData.retCode !== 0) {
+        logger.error(`ByBit API error: ${balanceData.retMsg}`);
+        return false;
+      }
+
+      // Sprawdź strukturę danych
+      if (balanceData.result?.list) {
+        console.log("=== LISTA KONT ===");
+        balanceData.result.list.forEach((account, index) => {
+          console.log(`Konto ${index}:`, JSON.stringify(account, null, 2));
+          console.log(`Account Type: ${account.accountType}`);
+
+          if (account.coin) {
+            console.log(`=== COINY W KONCIE ${index} ===`);
+            account.coin.forEach((coin, coinIndex) => {
+              console.log(`Coin ${coinIndex}:`, JSON.stringify(coin, null, 2));
+            });
+          }
+        });
+      }
+
       // Znajdź saldo USDT
-      const usdtBalance = balanceData.result?.list?.[0]?.coin?.find(
+      const accountInfo = balanceData.result?.list?.[0];
+      const usdtBalance = accountInfo?.coin?.find(
         (coin) => coin.coin === "USDT"
       );
 
       if (usdtBalance) {
+        // Dla kont Futures może być inne pole
         const availableBalance = parseFloat(
-          usdtBalance.availableToWithdraw || usdtBalance.walletBalance
+          usdtBalance.availableToWithdraw ||
+            usdtBalance.walletBalance ||
+            usdtBalance.availableBalance || // Spróbuj też to pole
+            "0"
         );
+
+        console.log(`Znalezione saldo USDT: ${availableBalance}`);
 
         // Inicjalizuj financials jeśli nie istnieje
         if (!instance.financials) {
@@ -530,7 +564,7 @@ class InstanceService {
           };
         }
 
-        // Zaktualizuj saldo zachowując zablokowane środki
+        // Zaktualizuj saldo
         const lockedBalance = instance.financials.lockedBalance || 0;
         instance.financials.availableBalance = availableBalance - lockedBalance;
         instance.financials.currentBalance = availableBalance;
@@ -550,6 +584,7 @@ class InstanceService {
       logger.error(
         `Błąd synchronizacji salda dla ${instanceId}: ${error.message}`
       );
+      logger.error(`Stack trace: ${error.stack}`);
       return false;
     }
   }
