@@ -14,6 +14,7 @@ const authRoutes = require("./auth.routes");
 const marketRoutes = require("./market.routes");
 const signalRoutes = require("./signal.routes");
 const instanceRoutes = require("./instance.routes");
+const simulatorRoutes = require("./simulator.routes"); // Tylko do testów
 
 // Bazowa ścieżka API
 const API_BASE = "/api/v1";
@@ -23,6 +24,7 @@ router.use(`${API_BASE}/auth`, authRoutes);
 router.use(`${API_BASE}/market`, marketRoutes);
 router.use(`${API_BASE}/signals`, signalRoutes);
 router.use(`${API_BASE}/instances`, instanceRoutes);
+router.use(`${API_BASE}/simulator`, simulatorRoutes); // Tylko do testów
 
 // Podstawowa trasa dla sprawdzenia działania API
 router.get(`${API_BASE}`, (req, res) => {
