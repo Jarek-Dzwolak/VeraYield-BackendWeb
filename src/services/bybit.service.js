@@ -17,21 +17,15 @@ class ByBitService {
   /**
    * Tworzy podpis dla żądania
    */
-  /**
-   * Tworzy podpis dla żądania
-   */
-
   createSignature(apiKey, apiSecret, params) {
     const timestamp = Date.now().toString();
     const recvWindow = "5000";
 
-    // Sortuj parametry i utwórz query string
     const queryString = Object.keys(params)
       .sort()
       .map((key) => `${key}=${params[key]}`)
       .join("&");
 
-    // Dla ByBit API v5: timestamp + apiKey + recvWindow + queryString
     const signStr = timestamp + apiKey + recvWindow + queryString;
 
     const sign = crypto
@@ -45,10 +39,8 @@ class ByBitService {
   /**
    * Wykonuje żądanie do API ByBit
    */
-
   async makeRequest(method, endpoint, apiKey, apiSecret, params = {}) {
     try {
-      // Przekaż apiKey do createSignature
       const { sign, timestamp } = this.createSignature(
         apiKey,
         apiSecret,
@@ -69,7 +61,6 @@ class ByBitService {
         headers,
       };
 
-      // Dla GET requestów parametry idą w URL
       if (method === "GET") {
         const queryString = Object.keys(params)
           .map((key) => `${key}=${encodeURIComponent(params[key])}`)
@@ -79,7 +70,6 @@ class ByBitService {
           config.url += `?${queryString}`;
         }
       } else {
-        // Dla POST requestów parametry idą w body
         config.data = params;
       }
 
@@ -93,68 +83,27 @@ class ByBitService {
       throw error;
     }
   }
+
   /**
    * Pobiera saldo konta
    */
-  // Dodaj tę nową funkcję:
-  async getAccountInfo(apiKey, apiSecret) {
-    // Używamy endpointu account info który może działać z uprawnieniami Contract
-    return this.makeRequest("GET", "/v5/account/info", apiKey, apiSecret, {});
-  }
-
   async getBalance(apiKey, apiSecret, subUid = null) {
     try {
-      console.log("=== REAL-TIME BALANCE CHECK ===");
-      console.log("Time:", new Date().toISOString());
-      console.log("SubUID:", subUid);
-
-      // Sprawdź oba konta jednocześnie
-      const [fundResult, unifiedResult] = await Promise.all([
-        // FUND account
-        this.makeRequest(
-          "GET",
-          "/v5/asset/transfer/query-account-coins-balance",
-          apiKey,
-          apiSecret,
-          {
-            accountType: "FUND",
-            coin: "USDT",
-            memberId: subUid || undefined,
-          }
-        ).catch((err) => ({ error: err.message })),
-
-        // UNIFIED account
-        this.makeRequest(
-          "GET",
-          "/v5/asset/transfer/query-account-coins-balance",
-          apiKey,
-          apiSecret,
-          {
-            accountType: "UNIFIED",
-            coin: "USDT",
-            memberId: subUid || undefined,
-          }
-        ).catch((err) => ({ error: err.message })),
-      ]);
-
-      console.log("\nFUND Account:");
-      console.log(JSON.stringify(fundResult.result || fundResult, null, 2));
-
-      console.log("\nUNIFIED Account:");
-      console.log(
-        JSON.stringify(unifiedResult.result || unifiedResult, null, 2)
+      // Sprawdzamy UNIFIED account (tam są środki)
+      const response = await this.makeRequest(
+        "GET",
+        "/v5/asset/transfer/query-account-coins-balance",
+        apiKey,
+        apiSecret,
+        {
+          accountType: "UNIFIED",
+          coin: "USDT",
+          memberId: subUid || undefined,
+        }
       );
 
-      // Wybierz ten który ma środki
-      if (
-        unifiedResult.result?.balance?.[0]?.walletBalance &&
-        parseFloat(unifiedResult.result.balance[0].walletBalance) > 0
-      ) {
-        console.log(
-          "Using UNIFIED balance:",
-          unifiedResult.result.balance[0].walletBalance
-        );
-        const balance = unifiedResult.result.balance[0];
+      if (response.result?.balance?.length > 0) {
+        const balance = response.result.balance[0];
         return {
           retCode: 0,
           result: {
@@ -173,38 +122,11 @@ class ByBitService {
           },
         };
       }
-
-      if (
-        fundResult.result?.balance?.[0]?.walletBalance &&
-        parseFloat(fundResult.result.balance[0].walletBalance) > 0
-      ) {
-        console.log(
-          "Using FUND balance:",
-          fundResult.result.balance[0].walletBalance
-        );
-        const balance = fundResult.result.balance[0];
-        return {
-          retCode: 0,
-          result: {
-            list: [
-              {
-                accountType: "FUND",
-                coin: [
-                  {
-                    coin: "USDT",
-                    walletBalance: balance.walletBalance,
-                    availableToWithdraw: balance.transferBalance,
-                  },
-                ],
-              },
-            ],
-          },
-        };
-      }
     } catch (error) {
-      console.log("Error:", error.message);
+      logger.error(`Error getting balance: ${error.message}`);
     }
 
+    // Zwróć zero jeśli błąd lub brak środków
     return {
       retCode: 0,
       result: {
@@ -223,6 +145,7 @@ class ByBitService {
       },
     };
   }
+
   /**
    * Otwiera pozycję futures (Market Order)
    */
@@ -251,7 +174,6 @@ class ByBitService {
    * Zamyka pozycję futures
    */
   async closePosition(apiKey, apiSecret, symbol, side, quantity, positionIdx) {
-    // Odwrotny side do zamknięcia
     const closeSide = side === "Buy" ? "Sell" : "Buy";
 
     return this.openPosition(
