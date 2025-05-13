@@ -31,6 +31,9 @@ class AnalysisService extends EventEmitter {
   /**
    * Konfiguruje nasłuchiwanie zdarzeń z serwisu Binance
    */
+  /**
+   * Konfiguruje nasłuchiwanie zdarzeń z serwisu Binance
+   */
   setupListeners() {
     // Nasłuchuj zamknięte świece 15-minutowe
     binanceService.on("klineClosed", (data) => {
@@ -112,8 +115,61 @@ class AnalysisService extends EventEmitter {
       // Aktualizuj ostatnią cenę
       this.lastPrices.set(instanceId, currentPrice);
     });
-  }
 
+    // Dodaj obsługę zdarzeń emitowanych bezpośrednio do analysisService (dla symulatora)
+    this.on("kline", (data) => {
+      logger.info(
+        `[SIMULATOR] Otrzymano zdarzenie kline bezpośrednio dla instanceId: ${data.instanceId}`
+      );
+
+      const { candle, instanceId } = data;
+      const currentPrice = candle.close;
+      const currentHigh = candle.high || currentPrice;
+      const currentLow = candle.low || currentPrice;
+
+      // Sprawdź, czy to aktywna instancja
+      if (!this.instances.has(instanceId)) {
+        logger.info(
+          `[SIMULATOR] Instancja ${instanceId} nie jest aktywna, pomijam`
+        );
+        return;
+      }
+
+      // Sprawdź, czy mamy poprzednią cenę
+      if (!this.lastPrices.has(instanceId)) {
+        logger.info(
+          `[SIMULATOR] Pierwszy event dla instancji ${instanceId}, zapisuję cenę ${currentPrice}`
+        );
+        this.lastPrices.set(instanceId, currentPrice);
+        return;
+      }
+
+      const previousPrice = this.lastPrices.get(instanceId);
+
+      // Zaktualizuj najwyższą cenę dla trailing stopu
+      this.updateHighestPrice(instanceId, currentHigh);
+
+      // Wykryj ewentualne sygnały
+      logger.info(
+        `[SIMULATOR] Wykrywanie sygnałów dla ${instanceId}: prev=${previousPrice}, curr=${currentPrice}, high=${currentHigh}, low=${currentLow}`
+      );
+
+      this.detectSignals(
+        instanceId,
+        previousPrice,
+        currentPrice,
+        currentHigh,
+        currentLow
+      );
+
+      // Aktualizuj ostatnią cenę
+      this.lastPrices.set(instanceId, currentPrice);
+
+      logger.info(
+        `[SIMULATOR] Zakończono przetwarzanie zdarzenia kline dla ${instanceId}`
+      );
+    });
+  }
   /**
    * Aktualizuje najwyższą cenę dla instancji (używane dla trailing stopu)
    * @param {string} instanceId - Identyfikator instancji
