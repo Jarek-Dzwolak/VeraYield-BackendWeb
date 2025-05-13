@@ -17,16 +17,24 @@ class ByBitService {
   /**
    * Tworzy podpis dla żądania
    */
-  createSignature(apiKey, apiSecret, params) {
+  createSignature(apiKey, apiSecret, params, method = "GET") {
     const timestamp = Date.now().toString();
     const recvWindow = "5000";
 
-    const queryString = Object.keys(params)
-      .sort()
-      .map((key) => `${key}=${params[key]}`)
-      .join("&");
+    let paramStr = "";
 
-    const signStr = timestamp + apiKey + recvWindow + queryString;
+    if (method === "POST") {
+      // Dla POST użyj JSON string
+      paramStr = JSON.stringify(params);
+    } else {
+      // Dla GET użyj query string
+      paramStr = Object.keys(params)
+        .sort()
+        .map((key) => `${key}=${params[key]}`)
+        .join("&");
+    }
+
+    const signStr = timestamp + apiKey + recvWindow + paramStr;
 
     const sign = crypto
       .createHmac("sha256", apiSecret)
@@ -35,16 +43,25 @@ class ByBitService {
 
     return { sign, timestamp };
   }
-
   /**
    * Wykonuje żądanie do API ByBit
    */
   async makeRequest(method, endpoint, apiKey, apiSecret, params = {}) {
     try {
+      // Stwórz kopię parametrów, żeby nie modyfikować oryginału
+      const paramsCopy = { ...params };
+
+      // Jeśli jest subaccountId, wyciągnij go przed utworzeniem podpisu
+      const subaccountId = paramsCopy.subaccountId;
+      if (subaccountId) {
+        delete paramsCopy.subaccountId;
+      }
+
       const { sign, timestamp } = this.createSignature(
         apiKey,
         apiSecret,
-        params
+        paramsCopy,
+        method
       );
 
       const headers = {
@@ -55,6 +72,11 @@ class ByBitService {
         "Content-Type": "application/json",
       };
 
+      // Dodaj Referer dla subkonta jeśli istnieje
+      if (subaccountId) {
+        headers["Referer"] = "ref-subaccount-" + subaccountId;
+      }
+
       let config = {
         method,
         url: `${this.baseUrl}${endpoint}`,
@@ -62,15 +84,15 @@ class ByBitService {
       };
 
       if (method === "GET") {
-        const queryString = Object.keys(params)
-          .map((key) => `${key}=${encodeURIComponent(params[key])}`)
+        const queryString = Object.keys(paramsCopy)
+          .map((key) => `${key}=${encodeURIComponent(paramsCopy[key])}`)
           .join("&");
 
         if (queryString) {
           config.url += `?${queryString}`;
         }
       } else {
-        config.data = params;
+        config.data = paramsCopy;
       }
 
       const response = await axios(config);
@@ -83,7 +105,6 @@ class ByBitService {
       throw error;
     }
   }
-
   /**
    * Pobiera saldo konta
    */
@@ -149,7 +170,15 @@ class ByBitService {
   /**
    * Otwiera pozycję futures (Market Order)
    */
-  async openPosition(apiKey, apiSecret, symbol, side, quantity, positionIdx) {
+  async openPosition(
+    apiKey,
+    apiSecret,
+    symbol,
+    side,
+    quantity,
+    positionIdx,
+    subaccountId = null
+  ) {
     const params = {
       category: "linear",
       symbol: symbol,
@@ -161,6 +190,11 @@ class ByBitService {
       closeOnTrigger: false,
     };
 
+    // Dodaj subaccountId jeśli został przekazany
+    if (subaccountId) {
+      params.subaccountId = subaccountId;
+    }
+
     return this.makeRequest(
       "POST",
       "/v5/order/create",
@@ -169,11 +203,18 @@ class ByBitService {
       params
     );
   }
-
   /**
    * Zamyka pozycję futures
    */
-  async closePosition(apiKey, apiSecret, symbol, side, quantity, positionIdx) {
+  async closePosition(
+    apiKey,
+    apiSecret,
+    symbol,
+    side,
+    quantity,
+    positionIdx,
+    subaccountId = null
+  ) {
     const closeSide = side === "Buy" ? "Sell" : "Buy";
 
     return this.openPosition(
@@ -182,10 +223,10 @@ class ByBitService {
       symbol,
       closeSide,
       quantity,
-      positionIdx
+      positionIdx,
+      subaccountId
     );
   }
-
   /**
    * Ustawia dźwignię dla symbolu
    */

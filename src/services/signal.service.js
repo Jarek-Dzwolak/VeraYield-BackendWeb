@@ -172,11 +172,11 @@ class SignalService extends EventEmitter {
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
-                "Buy", // Dla strategii long
+                "Buy",
                 contractQuantity,
-                1 // One-way mode
+                1,
+                instance.bybitConfig.subaccountId
               );
-
               logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
 
               // Zapisz ID zlecenia w metadanych sygnału
@@ -365,9 +365,10 @@ class SignalService extends EventEmitter {
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
-                "Buy", // Dla strategii long
+                "Buy",
                 contractQuantity,
-                1 // One-way mode
+                1,
+                instance.bybitConfig.subaccountId
               );
 
               logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
@@ -588,13 +589,14 @@ class SignalService extends EventEmitter {
             }
 
             // Zamknij pozycję
-            const orderResult = await bybitService.closePosition(
-              instanceForExit.bybitConfig.apiKey,
-              instanceForExit.bybitConfig.apiSecret,
-              instanceForExit.symbol,
-              "Buy", // Strona początkowej pozycji
-              totalContractQuantity.toString(),
-              1 // One-way mode
+            const orderResult = await bybitService.openPosition(
+              instance.bybitConfig.apiKey,
+              instance.bybitConfig.apiSecret,
+              instance.symbol,
+              "Buy",
+              contractQuantity,
+              1,
+              instance.bybitConfig.subaccountId
             );
 
             logger.info(
