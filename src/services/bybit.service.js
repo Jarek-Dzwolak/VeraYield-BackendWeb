@@ -12,6 +12,8 @@ class ByBitService {
       process.env.BYBIT_TESTNET === "true"
         ? "https://api-testnet.bybit.com"
         : "https://api.bybit.com";
+    this.instrumentInfoCache = new Map(); // Keszowanie informacji o instrumentach
+    this.instrumentCacheExpiry = 3600000; // 1 godzina w ms
   }
 
   /**
@@ -43,6 +45,7 @@ class ByBitService {
 
     return { sign, timestamp };
   }
+
   /**
    * Wykonuje żądanie do API ByBit
    */
@@ -105,6 +108,7 @@ class ByBitService {
       throw error;
     }
   }
+
   /**
    * Pobiera saldo konta
    */
@@ -203,6 +207,7 @@ class ByBitService {
       params
     );
   }
+
   /**
    * Zamyka pozycję futures
    */
@@ -227,6 +232,7 @@ class ByBitService {
       subaccountId
     );
   }
+
   /**
    * Ustawia dźwignię dla symbolu
    */
@@ -287,6 +293,84 @@ class ByBitService {
       logger.error(`Error fetching ByBit price: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Pobiera informacje o instrumencie handlowym (limity, krok wielkości itp.)
+   */
+  async getInstrumentInfo(symbol) {
+    try {
+      const response = await axios.get(
+        `${this.baseUrl}/v5/market/instruments-info`,
+        {
+          params: {
+            category: "linear",
+            symbol: symbol,
+          },
+        }
+      );
+
+      if (response.data.retCode === 0 && response.data.result.list.length > 0) {
+        const instrument = response.data.result.list[0];
+
+        // Pobierz filtry dla wielkości zlecenia (lotSizeFilter)
+        const lotSizeFilter = instrument.lotSizeFilter || {};
+
+        return {
+          symbol: instrument.symbol,
+          minOrderQty: parseFloat(lotSizeFilter.minOrderQty || "0.001"),
+          maxOrderQty: parseFloat(lotSizeFilter.maxOrderQty || "100"),
+          qtyStep: parseFloat(lotSizeFilter.qtyStep || "0.001"),
+          minOrderValue: parseFloat(instrument.minOrderValue || "10"),
+        };
+      }
+
+      // Jeśli nie znaleziono informacji, zwróć domyślne wartości dla BTC/USDT
+      logger.warn(
+        `Nie znaleziono informacji o instrumencie ${symbol}, używam domyślnych wartości`
+      );
+      return {
+        symbol: symbol,
+        minOrderQty: 0.001,
+        maxOrderQty: 100,
+        qtyStep: 0.001,
+        minOrderValue: 10,
+      };
+    } catch (error) {
+      logger.error(`Error fetching instrument info: ${error.message}`);
+      // Zwróć domyślne wartości dla BTC/USDT w przypadku błędu
+      return {
+        symbol: symbol,
+        minOrderQty: 0.001,
+        maxOrderQty: 100,
+        qtyStep: 0.001,
+        minOrderValue: 10,
+      };
+    }
+  }
+
+  /**
+   * Pobiera zakeszowane informacje o instrumencie (dla optymalizacji wydajności)
+   */
+  async getCachedInstrumentInfo(symbol) {
+    // Sprawdź, czy mamy zakeszowane informacje i czy nie wygasły
+    const cached = this.instrumentInfoCache.get(symbol);
+    const now = Date.now();
+
+    if (cached && now - cached.timestamp < this.instrumentCacheExpiry) {
+      return cached.data;
+    }
+
+    // Pobierz nowe informacje z API
+    const instrumentInfo = await this.getInstrumentInfo(symbol);
+
+    // Zakeszuj nowe informacje
+    this.instrumentInfoCache.set(symbol, {
+      data: instrumentInfo,
+      timestamp: now,
+    });
+
+    return instrumentInfo;
   }
 }
 
