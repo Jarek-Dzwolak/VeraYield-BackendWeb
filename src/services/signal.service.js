@@ -303,18 +303,16 @@ class SignalService extends EventEmitter {
                 instance.symbol,
                 instance.bybitConfig.marginMode === "isolated" ? 1 : 0
               );
-
-              // Otwórz pozycję z dostosowaną wielkością
+              // Otwórz pozycję z dostosowaną wielkością - dla pierwszego wejścia
               const orderResult = await bybitService.openPosition(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
                 "Buy",
                 optimalEntry.adjustedQuantity.toString(),
-                1,
+                0, // 0 = One-Way Mode (zawsze używamy tej wartości)
                 instance.bybitConfig.subaccountId
               );
-
               logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
 
               // Zapisz ID zlecenia w metadanych sygnału
@@ -500,14 +498,14 @@ class SignalService extends EventEmitter {
           // Wystaw prawdziwe zlecenie na ByBit
           if (instance.bybitConfig && instance.bybitConfig.apiKey) {
             try {
-              // Otwórz pozycję
+              // Otwórz pozycję z dostosowaną wielkością - dla pierwszego wejścia
               const orderResult = await bybitService.openPosition(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
                 "Buy",
                 optimalEntry.adjustedQuantity.toString(),
-                1,
+                0, // 0 = One-Way Mode (zawsze używamy tej wartości)
                 instance.bybitConfig.subaccountId
               );
 
@@ -735,7 +733,6 @@ class SignalService extends EventEmitter {
                 instrumentInfo
               );
             }
-
             // Zamknij pozycję
             const orderResult = await bybitService.closePosition(
               instanceForExit.bybitConfig.apiKey,
@@ -743,12 +740,8 @@ class SignalService extends EventEmitter {
               instanceForExit.symbol,
               "Sell", // Zamknięcie pozycji long
               totalContractQuantity.toString(),
-              1,
+              0, // 0 = One-Way Mode (zawsze używamy tej wartości)
               instanceForExit.bybitConfig.subaccountId
-            );
-
-            logger.info(
-              `ByBit position closed: ${JSON.stringify(orderResult)}`
             );
 
             // Zapisz ID zlecenia zamykającego

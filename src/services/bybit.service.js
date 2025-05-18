@@ -172,7 +172,72 @@ class ByBitService {
   }
 
   /**
-   * Otwiera pozycję futures (Market Order)
+   * Pobiera aktualny tryb pozycji konta
+   */
+  async getPositionMode(apiKey, apiSecret, subaccountId = null) {
+    try {
+      const params = {
+        category: "linear",
+      };
+
+      if (subaccountId) {
+        params.subaccountId = subaccountId;
+      }
+
+      const response = await this.makeRequest(
+        "GET",
+        "/v5/position/position-mode",
+        apiKey,
+        apiSecret,
+        params
+      );
+
+      if (response.retCode === 0) {
+        return response.result.mode; // 0: Merged Single (One-Way), 3: Both Sides (Hedge)
+      }
+
+      return null;
+    } catch (error) {
+      logger.error(`Error getting position mode: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Ustawia tryb pozycji konta (One-Way Mode)
+   */
+  async setPositionMode(apiKey, apiSecret, subaccountId = null) {
+    try {
+      const params = {
+        category: "linear",
+        coin: "USDT", // Wymagane przy przełączaniu globalnego trybu pozycji
+        mode: 0, // 0: Merged Single (One-Way Mode)
+      };
+
+      if (subaccountId) {
+        params.subaccountId = subaccountId;
+      }
+
+      const response = await this.makeRequest(
+        "POST",
+        "/v5/position/switch-mode",
+        apiKey,
+        apiSecret,
+        params
+      );
+
+      logger.info(
+        `Ustawiono tryb pozycji na One-Way Mode: ${JSON.stringify(response)}`
+      );
+      return response;
+    } catch (error) {
+      logger.error(`Error setting position mode: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Otwiera pozycję futures (Market Order) - zawsze używa One-Way Mode
    */
   async openPosition(
     apiKey,
@@ -183,33 +248,41 @@ class ByBitService {
     positionIdx,
     subaccountId = null
   ) {
-    const params = {
-      category: "linear",
-      symbol: symbol,
-      side: side, // 'Buy' lub 'Sell'
-      orderType: "Market",
-      qty: quantity.toString(),
-      positionIdx: positionIdx, // 1=Onesided, 2=Buyside, 0=Sell-side
-      timeInForce: "IOC",
-      closeOnTrigger: false,
-    };
+    try {
+      // Najpierw upewnij się, że konto jest w trybie One-Way Mode
+      await this.setPositionMode(apiKey, apiSecret, subaccountId);
 
-    // Dodaj subaccountId jeśli został przekazany
-    if (subaccountId) {
-      params.subaccountId = subaccountId;
+      const params = {
+        category: "linear",
+        symbol: symbol,
+        side: side, // 'Buy' lub 'Sell'
+        orderType: "Market",
+        qty: quantity.toString(),
+        positionIdx: 0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+        timeInForce: "IOC",
+        closeOnTrigger: false,
+      };
+
+      // Dodaj subaccountId jeśli został przekazany
+      if (subaccountId) {
+        params.subaccountId = subaccountId;
+      }
+
+      return this.makeRequest(
+        "POST",
+        "/v5/order/create",
+        apiKey,
+        apiSecret,
+        params
+      );
+    } catch (error) {
+      logger.error(`Error opening position: ${error.message}`);
+      throw error;
     }
-
-    return this.makeRequest(
-      "POST",
-      "/v5/order/create",
-      apiKey,
-      apiSecret,
-      params
-    );
   }
 
   /**
-   * Zamyka pozycję futures
+   * Zamyka pozycję futures - zawsze używa One-Way Mode
    */
   async closePosition(
     apiKey,
@@ -220,17 +293,36 @@ class ByBitService {
     positionIdx,
     subaccountId = null
   ) {
-    const closeSide = side === "Buy" ? "Sell" : "Buy";
+    try {
+      const closeSide = side === "Buy" ? "Sell" : "Buy";
 
-    return this.openPosition(
-      apiKey,
-      apiSecret,
-      symbol,
-      closeSide,
-      quantity,
-      positionIdx,
-      subaccountId
-    );
+      const params = {
+        category: "linear",
+        symbol: symbol,
+        side: closeSide,
+        orderType: "Market",
+        qty: quantity.toString(),
+        positionIdx: 0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+        timeInForce: "IOC",
+        closeOnTrigger: true, // Ustawione na true dla zamykania pozycji
+      };
+
+      // Dodaj subaccountId jeśli został przekazany
+      if (subaccountId) {
+        params.subaccountId = subaccountId;
+      }
+
+      return this.makeRequest(
+        "POST",
+        "/v5/order/create",
+        apiKey,
+        apiSecret,
+        params
+      );
+    } catch (error) {
+      logger.error(`Error closing position: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
