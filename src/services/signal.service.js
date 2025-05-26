@@ -1099,6 +1099,7 @@ class SignalService extends EventEmitter {
   }
 }
 
+// Pewne zmiany które che żeby zostały
 // Eksportuj singleton
 const signalService = new SignalService();
 module.exports = signalService;
