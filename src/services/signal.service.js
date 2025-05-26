@@ -694,7 +694,17 @@ class SignalService extends EventEmitter {
         );
 
         // Zamknij prawdziwą pozycję na ByBit
+        // NAPRAWIONE: Pobierz instancję bez .lean() aby mieć pełną konfigurację
         const instanceForExit = await Instance.findOne({ instanceId });
+
+        logger.info(`[EXIT] Pobrano instancję ${instanceId}`);
+        logger.info(
+          `[EXIT] Instance ma bybitConfig: ${!!instanceForExit?.bybitConfig}`
+        );
+        logger.info(
+          `[EXIT] Instance ma apiKey: ${!!instanceForExit?.bybitConfig?.apiKey}`
+        );
+
         if (
           instanceForExit &&
           instanceForExit.bybitConfig &&
@@ -705,14 +715,29 @@ class SignalService extends EventEmitter {
             let totalContractQuantity = 0;
 
             // Zbierz wszystkie wielkości z wejść pozycji
+            logger.info(
+              `[EXIT] Liczba wejść w pozycji: ${currentPosition.entries.length}`
+            );
+
             for (const entry of currentPosition.entries) {
+              logger.info(
+                `[EXIT] Entry contractQuantity: ${entry.contractQuantity}`
+              );
               if (entry.contractQuantity) {
                 totalContractQuantity += parseFloat(entry.contractQuantity);
               }
             }
 
+            logger.info(
+              `[EXIT] Całkowita wielkość kontraktów do zamknięcia: ${totalContractQuantity}`
+            );
+
             // Jeśli nie mamy zapisanej wielkości, oblicz ją na podstawie aktualnej ceny
             if (totalContractQuantity === 0) {
+              logger.warn(
+                `[EXIT] Brak contractQuantity w entries, obliczam na podstawie ceny`
+              );
+
               const currentPrice = await bybitService.getCurrentPrice(
                 instanceForExit.symbol
               );
@@ -732,16 +757,29 @@ class SignalService extends EventEmitter {
                 theoreticalQuantity,
                 instrumentInfo
               );
+
+              logger.info(
+                `[EXIT] Obliczona wielkość kontraktu: ${totalContractQuantity}`
+              );
             }
+
+            logger.info(
+              `[EXIT] Próba zamknięcia pozycji na ByBit: symbol=${instanceForExit.symbol}, quantity=${totalContractQuantity}`
+            );
+
             // Zamknij pozycję
             const orderResult = await bybitService.closePosition(
               instanceForExit.bybitConfig.apiKey,
               instanceForExit.bybitConfig.apiSecret,
               instanceForExit.symbol,
-              "Sell", // Zamknięcie pozycji long
+              "Buy", // Dla pozycji long side="Buy"
               totalContractQuantity.toString(),
               0, // 0 = One-Way Mode (zawsze używamy tej wartości)
               instanceForExit.bybitConfig.subaccountId
+            );
+
+            logger.info(
+              `[EXIT] ByBit close order placed: ${JSON.stringify(orderResult)}`
             );
 
             // Zapisz ID zlecenia zamykającego
@@ -751,8 +789,15 @@ class SignalService extends EventEmitter {
             exitSignal.metadata.contractQuantity = totalContractQuantity;
             await exitSignal.save();
           } catch (error) {
-            logger.error(`Error closing ByBit position: ${error.message}`);
+            logger.error(
+              `[EXIT] Error closing ByBit position: ${error.message}`
+            );
+            logger.error(`[EXIT] Error stack: ${error.stack}`);
           }
+        } else {
+          logger.warn(
+            `[EXIT] Brak konfiguracji ByBit dla instancji ${instanceId}`
+          );
         }
 
         // Zaktualizuj pozycję w pamięci
