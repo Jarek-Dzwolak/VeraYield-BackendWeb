@@ -583,36 +583,28 @@ class AccountService extends EventEmitter {
           `Sfinalizowano pozycję w instancji ${instanceId}. Zysk: ${profit}`
         );
 
-        // SAFETY CHECK: Walidacja i korekta lockedBalance
-        const actualLockedAmount = instance.financials.openPositions.reduce(
-          (sum, pos) => {
-            return sum + (pos.totalAmount || 0);
-          },
-          0
-        );
-
+        // SIMPLE SAFETY CHECK: Jeśli nie ma otwartych pozycji, wyzeruj lockedBalance
         if (
-          Math.abs(instance.financials.lockedBalance - actualLockedAmount) >
-          0.01
+          !instance.financials.openPositions ||
+          instance.financials.openPositions.length === 0
         ) {
-          logger.warn(`Wykryto rozbieżność w lockedBalance dla instancji ${instanceId}. 
-            Zapisane: ${instance.financials.lockedBalance}, 
-            Rzeczywiste: ${actualLockedAmount}. 
-            Wykonuję korektę.`);
+          if (instance.financials.lockedBalance > 0.01) {
+            logger.warn(
+              `Wykryto wiszący lockedBalance (${instance.financials.lockedBalance}) bez otwartych pozycji dla instancji ${instanceId}. Wykonuję korektę.`
+            );
 
-          const difference =
-            instance.financials.lockedBalance - actualLockedAmount;
-          instance.financials.lockedBalance = actualLockedAmount;
-          instance.financials.availableBalance += difference;
-          instance.financials.currentBalance =
-            instance.financials.availableBalance +
-            instance.financials.lockedBalance;
+            instance.financials.availableBalance +=
+              instance.financials.lockedBalance;
+            instance.financials.lockedBalance = 0;
+            instance.financials.currentBalance =
+              instance.financials.availableBalance;
 
-          await instance.save({ session });
+            await instance.save({ session });
 
-          logger.info(
-            `Skorygowano lockedBalance o ${difference} dla instancji ${instanceId}`
-          );
+            logger.info(
+              `Skorygowano lockedBalance dla instancji ${instanceId} - uwolniono wiszące środki`
+            );
+          }
         }
 
         // Emituj zdarzenie
