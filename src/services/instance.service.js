@@ -396,7 +396,23 @@ class InstanceService {
       }
 
       // Usuń sygnały powiązane z instancją
-      await signalService.clearSignalHistory(instanceId);
+      const Signal = require("../models/signal.model");
+      const deletedSignals = await Signal.deleteMany({ instanceId });
+
+      // Wyczyść pamięć - użyj opóźnionego importu
+      try {
+        const signalService = require("./signal.service");
+        if (signalService.positionHistory) {
+          signalService.positionHistory.delete(instanceId);
+          signalService.lastEntryTimes.delete(instanceId);
+        }
+      } catch (e) {
+        logger.warn(
+          `Nie udało się wyczyścić pamięci signal service: ${e.message}`
+        );
+      }
+
+      logger.info(`Usunięto ${deletedSignals.deletedCount} sygnałów`);
 
       // Usuń instancję z bazy danych
       await Instance.deleteOne({ instanceId });
