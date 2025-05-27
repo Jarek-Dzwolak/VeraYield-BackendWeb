@@ -443,12 +443,35 @@ class AccountService extends EventEmitter {
           );
         }
 
-        // Oblicz łączną kwotę wejść
-        // Upewnij się, że używamy totalAmount do obliczenia rzeczywistej kwoty wejść
-        const totalEntryAmount =
-          position.totalAmount ||
-          position.entrySignals.reduce((sum, entry) => sum + entry.amount, 0) ||
-          entryAmount;
+        // Oblicz łączną kwotę wejść z pamięci RAM (activePosition)
+
+        let totalEntryAmount = entryAmount; // fallback
+
+        if (
+          activePosition &&
+          activePosition.entries &&
+          activePosition.entries.length > 0
+        ) {
+          // Użyj danych z pamięci RAM - tu są WSZYSTKIE wejścia
+
+          totalEntryAmount = activePosition.entries.reduce(
+            (sum, entry) => sum + (entry.amount || 0),
+            0
+          );
+          logger.info(
+            `Używam danych z RAM: ${activePosition.entries.length} wejść, łączna kwota: ${totalEntryAmount}`
+          );
+        } else {
+          // Fallback na dane z bazy
+          totalEntryAmount =
+            position.totalAmount ||
+            position.entrySignals.reduce(
+              (sum, entry) => sum + entry.amount,
+              0
+            ) ||
+            entryAmount;
+          logger.warn(`Używam danych z bazy (fallback): ${totalEntryAmount}`);
+        }
 
         // Oblicz zysk na podstawie rzeczywistej kwoty wejść i kwoty wyjścia
         const profit = exitAmount - totalEntryAmount;
