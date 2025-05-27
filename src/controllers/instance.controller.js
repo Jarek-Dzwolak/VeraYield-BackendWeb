@@ -92,6 +92,7 @@ const getInstance = async (req, res) => {
 };
 
 /**
+ /**
  * Tworzy nową instancję
  * @param {Object} req - Obiekt żądania
  * @param {Object} res - Obiekt odpowiedzi
@@ -108,6 +109,89 @@ const createInstance = async (req, res) => {
       bybitConfig,
     } = req.body;
 
+    // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
+    logger.info("=== DEBUGOWANIE KLUCZY API ===");
+    if (bybitConfig && bybitConfig.apiKey) {
+      logger.info(`Raw received API Key: "${bybitConfig.apiKey}"`);
+      logger.info(`API Key length: ${bybitConfig.apiKey.length}`);
+      logger.info(
+        `API Key first 20 chars: "${bybitConfig.apiKey.substring(0, 20)}"`
+      );
+
+      try {
+        // Sprawdź czy jest to Base64
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isBase64 = base64Regex.test(bybitConfig.apiKey);
+        logger.info(`Is API Key Base64: ${isBase64}`);
+
+        if (isBase64 && bybitConfig.apiKey.length > 10) {
+          const decoded = Buffer.from(bybitConfig.apiKey, "base64").toString(
+            "utf8"
+          );
+          logger.info(`Decoded API Key: "${decoded}"`);
+          logger.info(`Decoded API Key length: ${decoded.length}`);
+
+          // Sprawdź czy zawiera tylko alfanumeryczne znaki
+          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
+          logger.info(`Is decoded API Key alphanumeric: ${isAlphanumeric}`);
+
+          if (isAlphanumeric) {
+            bybitConfig.apiKey = decoded;
+            logger.info("✅ API Key successfully decoded and stored");
+          } else {
+            logger.warn(
+              "❌ Decoded API Key contains invalid characters, keeping original"
+            );
+          }
+        } else {
+          logger.info("API Key is not Base64 encoded, keeping as-is");
+        }
+      } catch (error) {
+        logger.error(`Error decoding API Key: ${error.message}`);
+      }
+    }
+
+    if (bybitConfig && bybitConfig.apiSecret) {
+      logger.info(`Raw received API Secret: "${bybitConfig.apiSecret}"`);
+      logger.info(`API Secret length: ${bybitConfig.apiSecret.length}`);
+      logger.info(
+        `API Secret first 20 chars: "${bybitConfig.apiSecret.substring(0, 20)}"`
+      );
+
+      try {
+        // Sprawdź czy jest to Base64
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isBase64 = base64Regex.test(bybitConfig.apiSecret);
+        logger.info(`Is API Secret Base64: ${isBase64}`);
+
+        if (isBase64 && bybitConfig.apiSecret.length > 10) {
+          const decoded = Buffer.from(bybitConfig.apiSecret, "base64").toString(
+            "utf8"
+          );
+          logger.info(`Decoded API Secret: "${decoded}"`);
+          logger.info(`Decoded API Secret length: ${decoded.length}`);
+
+          // Sprawdź czy zawiera tylko alfanumeryczne znaki
+          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
+          logger.info(`Is decoded API Secret alphanumeric: ${isAlphanumeric}`);
+
+          if (isAlphanumeric) {
+            bybitConfig.apiSecret = decoded;
+            logger.info("✅ API Secret successfully decoded and stored");
+          } else {
+            logger.warn(
+              "❌ Decoded API Secret contains invalid characters, keeping original"
+            );
+          }
+        } else {
+          logger.info("API Secret is not Base64 encoded, keeping as-is");
+        }
+      } catch (error) {
+        logger.error(`Error decoding API Secret: ${error.message}`);
+      }
+    }
+    logger.info("=== KONIEC DEBUGOWANIA ===");
+
     // Przygotuj konfigurację instancji
     const config = {
       symbol,
@@ -119,31 +203,7 @@ const createInstance = async (req, res) => {
       instanceId: uuidv4(), // Generuj nowy UUID
       bybitConfig: bybitConfig || {}, // Dodaj konfigurację ByBit
     };
-    // Dekoduj klucze API z Base64, jeśli są zaszyfrowane
-    if (bybitConfig && bybitConfig.apiKey) {
-      try {
-        bybitConfig.apiKey = Buffer.from(bybitConfig.apiKey, "base64").toString(
-          "utf8"
-        );
-      } catch (error) {
-        logger.debug(
-          "API Key nie był zakodowany w Base64 lub błąd dekodowania"
-        );
-      }
-    }
 
-    if (bybitConfig && bybitConfig.apiSecret) {
-      try {
-        bybitConfig.apiSecret = Buffer.from(
-          bybitConfig.apiSecret,
-          "base64"
-        ).toString("utf8");
-      } catch (error) {
-        logger.debug(
-          "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
-        );
-      }
-    }
     // Utwórz instancję
     const instance = await instanceService.createInstance(config);
 
@@ -161,6 +221,7 @@ const createInstance = async (req, res) => {
 };
 
 /**
+
  * Aktualizuje instancję
  * @param {Object} req - Obiekt żądania
  * @param {Object} res - Obiekt odpowiedzi
@@ -632,29 +693,59 @@ const updateBybitConfig = async (req, res) => {
     const { instanceId } = req.params;
     const { apiKey, apiSecret, leverage, marginMode, testnet } = req.body;
 
-    // Dekoduj klucze API z Base64, jeśli są zaszyfrowane
+    // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
+    logger.info("=== DEBUGOWANIE UPDATE BYBIT KLUCZY ===");
     let decodedApiKey = apiKey;
     let decodedApiSecret = apiSecret;
 
     if (apiKey) {
+      logger.info(`Raw received API Key: "${apiKey}"`);
+      logger.info(`API Key length: ${apiKey.length}`);
+
       try {
-        decodedApiKey = Buffer.from(apiKey, "base64").toString("utf8");
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isBase64 = base64Regex.test(apiKey);
+        logger.info(`Is API Key Base64: ${isBase64}`);
+
+        if (isBase64 && apiKey.length > 10) {
+          const decoded = Buffer.from(apiKey, "base64").toString("utf8");
+          logger.info(`Decoded API Key: "${decoded}"`);
+
+          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
+          if (isAlphanumeric) {
+            decodedApiKey = decoded;
+            logger.info("✅ API Key successfully decoded");
+          }
+        }
       } catch (error) {
-        logger.debug(
-          "API Key nie był zakodowany w Base64 lub błąd dekodowania"
-        );
+        logger.error(`Error decoding API Key: ${error.message}`);
       }
     }
 
     if (apiSecret) {
+      logger.info(`Raw received API Secret: "${apiSecret}"`);
+      logger.info(`API Secret length: ${apiSecret.length}`);
+
       try {
-        decodedApiSecret = Buffer.from(apiSecret, "base64").toString("utf8");
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isBase64 = base64Regex.test(apiSecret);
+        logger.info(`Is API Secret Base64: ${isBase64}`);
+
+        if (isBase64 && apiSecret.length > 10) {
+          const decoded = Buffer.from(apiSecret, "base64").toString("utf8");
+          logger.info(`Decoded API Secret: "${decoded}"`);
+
+          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
+          if (isAlphanumeric) {
+            decodedApiSecret = decoded;
+            logger.info("✅ API Secret successfully decoded");
+          }
+        }
       } catch (error) {
-        logger.debug(
-          "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
-        );
+        logger.error(`Error decoding API Secret: ${error.message}`);
       }
     }
+    logger.info("=== KONIEC UPDATE DEBUGOWANIA ===");
 
     const instance = await Instance.findOne({ instanceId });
 
