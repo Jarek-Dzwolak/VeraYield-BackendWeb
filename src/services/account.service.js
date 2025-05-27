@@ -263,8 +263,17 @@ class AccountService extends EventEmitter {
             );
           }
         } else {
-          // To pierwsze wejście - utwórz nową pozycję
-          positionId = `position-${instanceId}-${Date.now()}`;
+          // To pierwsze wejście - pobierz positionId z sygnału
+          const signal = await Signal.findById(signalId).session(session);
+          if (signal && signal.positionId) {
+            positionId = signal.positionId;
+            logger.info(`🔑 Używam positionId z sygnału: ${positionId}`);
+          } else {
+            positionId = `position-${instanceId}-${Date.now()}`;
+            logger.warn(
+              `⚠️ Brak positionId w sygnale, generuję nowy: ${positionId}`
+            );
+          }
 
           instance.financials.openPositions.push({
             positionId,
