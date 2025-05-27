@@ -168,6 +168,7 @@ class SignalService extends EventEmitter {
           return;
         }
 
+        // ✅ NAPRAWKA: Generuj positionId dla pierwszego wejścia
         const positionId = `position-${instanceId}-${Date.now()}`;
 
         const optimalEntry = await this._calculateOptimalContractQuantity(
@@ -179,12 +180,13 @@ class SignalService extends EventEmitter {
         );
 
         logger.info(`
-          Pierwsze wejście dla ${instanceId}:
-          - Planowana alokacja: ${firstEntryPercent}%
-          - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
-          - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
-          - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
-        `);
+        Pierwsze wejście dla ${instanceId}:
+        - Planowana alokacja: ${firstEntryPercent}%
+        - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
+        - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
+        - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
+        - POSITION ID: ${positionId}
+      `);
 
         const signal = await this.createSignalInDatabase({
           instanceId,
@@ -254,7 +256,7 @@ class SignalService extends EventEmitter {
           const newPosition = {
             instanceId,
             symbol: instance.symbol,
-            positionId: positionId,
+            positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
             entryTime: timestamp,
             entryPrice: price,
             capitalAllocation: optimalEntry.actualAllocationPercent / 100,
@@ -270,7 +272,7 @@ class SignalService extends EventEmitter {
                 amount: optimalEntry.actualMargin,
                 signalId: signal._id.toString(),
                 contractQuantity: optimalEntry.adjustedQuantity,
-                positionId: positionId,
+                positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
               },
             ],
             history: [],
@@ -283,7 +285,7 @@ class SignalService extends EventEmitter {
           this.emit("newPosition", newPosition);
 
           logger.info(
-            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC`
+            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC, POSITION ID: ${positionId}`
           );
         } catch (error) {
           logger.error(
@@ -358,16 +360,18 @@ class SignalService extends EventEmitter {
           instrumentInfo
         );
 
-        logger.info(`
-          ${entryType.toUpperCase()} wejście dla ${instanceId}:
-          - Pozostały bilans: ${remainingBalance}
-          - Planowana alokacja: ${allocationPercent}% z pozostałego kapitału
-          - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
-          - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
-          - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
-        `);
+        // ✅ NAPRAWKA: Używaj positionId z aktywnej pozycji
+        const positionId = currentPosition.positionId;
 
-        const positionId = `position-${instanceId}-${Date.now()}`;
+        logger.info(`
+        ${entryType.toUpperCase()} wejście dla ${instanceId}:
+        - Pozostały bilans: ${remainingBalance}
+        - Planowana alokacja: ${allocationPercent}% z pozostałego kapitału
+        - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
+        - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
+        - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
+        - POSITION ID: ${positionId} (używam istniejący)
+      `);
 
         const signal = await this.createSignalInDatabase({
           instanceId,
@@ -385,7 +389,7 @@ class SignalService extends EventEmitter {
             theoreticalQuantity: optimalEntry.theoreticalQuantity,
             adjustedQuantity: optimalEntry.adjustedQuantity,
           },
-          positionId: positionId,
+          positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID CO PIERWSZE WEJŚCIE
         });
 
         try {
@@ -428,7 +432,7 @@ class SignalService extends EventEmitter {
             amount: optimalEntry.actualMargin,
             signalId: signal._id.toString(),
             contractQuantity: optimalEntry.adjustedQuantity,
-            positionId: positionId,
+            positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
           });
 
           currentPosition.capitalAllocation +=
@@ -440,7 +444,7 @@ class SignalService extends EventEmitter {
           this.emit("positionUpdated", currentPosition);
 
           logger.info(
-            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, kwota: ${optimalEntry.actualMargin}, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC)`
+            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, kwota: ${optimalEntry.actualMargin}, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC, POSITION ID: ${positionId})`
           );
         } catch (error) {
           logger.error(

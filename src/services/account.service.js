@@ -339,16 +339,10 @@ class AccountService extends EventEmitter {
           `Aktywna pozycja z pamięci RAM: ${activePosition ? JSON.stringify(activePosition) : "brak"}`
         );
 
-        // Przygotuj się do wyszukania pozycji w bazie
-        let positionId = null;
-        if (activePosition) {
-          positionId = activePosition.positionId;
-          logger.debug(`Znaleziono ID pozycji w pamięci RAM: ${positionId}`);
-        }
-
-        // Znajdź pozycję w instancji
+        // ✅ NOWA LOGIKA WYSZUKIWANIA POZYCJI
         let position = null;
         let positionIndex = -1;
+        let totalEntryAmount = entryAmount; // fallback
 
         // Inicjalizuj openPositions, jeśli nie istnieje
         if (!instance.financials.openPositions) {
@@ -359,118 +353,189 @@ class AccountService extends EventEmitter {
           `Liczba otwartych pozycji w bazie: ${instance.financials.openPositions.length}`
         );
 
-        // Jeśli mamy positionId, znajdź pozycję po tym ID
-        if (positionId) {
+        // STRATEGIA 1: Szukaj po positionId z pamięci RAM
+        if (activePosition && activePosition.positionId) {
+          const positionId = activePosition.positionId;
+          logger.info(
+            `🔍 STRATEGIA 1: Szukam pozycji po positionId z RAM: ${positionId}`
+          );
+
           positionIndex = instance.financials.openPositions.findIndex(
             (p) => p.positionId === positionId
           );
+
           if (positionIndex !== -1) {
             position = instance.financials.openPositions[positionIndex];
             logger.info(
-              `Znaleziono pozycję po ID pozycji: ${positionId}, indeks: ${positionIndex}`
+              `✅ STRATEGIA 1: Znaleziono pozycję po positionId: ${positionId}, indeks: ${positionIndex}`
             );
-          }
-        }
 
-        // Jeśli nie znaleziono po positionId, spróbuj znaleźć po ID sygnału
-        if (!position && entrySignalId) {
-          for (let i = 0; i < instance.financials.openPositions.length; i++) {
-            const pos = instance.financials.openPositions[i];
-            const foundSignal =
-              pos.entrySignals &&
-              pos.entrySignals.some(
-                (entry) =>
-                  entry.signalId === entrySignalId ||
-                  String(entry.signalId) === String(entrySignalId)
-              );
+            // Oblicz totalEntryAmount z bazy danych
+            totalEntryAmount =
+              position.totalAmount ||
+              position.entrySignals?.reduce(
+                (sum, entry) => sum + (entry.amount || 0),
+                0
+              ) ||
+              0;
 
-            if (foundSignal) {
-              position = pos;
-              positionIndex = i;
-              logger.info(
-                `Znaleziono pozycję po ID sygnału wejścia: ${entrySignalId}, indeks: ${i}`
+            // Ale jeśli mamy dane z RAM, użyj ich (są bardziej aktualne)
+            if (activePosition.entries && activePosition.entries.length > 0) {
+              const ramTotal = activePosition.entries.reduce(
+                (sum, entry) => sum + (entry.amount || 0),
+                0
               );
-              break;
+              if (ramTotal > totalEntryAmount) {
+                totalEntryAmount = ramTotal;
+                logger.info(
+                  `🔄 Używam sumy z pamięci RAM: ${totalEntryAmount} (baza: ${position.totalAmount})`
+                );
+              }
             }
           }
         }
 
-        // Jeśli nadal nie znaleziono, a mamy aktywną pozycję w pamięci, odtwórz ją
-        if (
-          !position &&
-          activePosition &&
-          activePosition.entries &&
-          activePosition.entries.length > 0
-        ) {
+        // STRATEGIA 2: Fallback - szukaj wszystkich wejść dla tej instancji
+        if (!position) {
           logger.info(
-            `Odtwarzanie pozycji z pamięci RAM dla instancji ${instanceId}`
+            `🔍 STRATEGIA 2: Pozycja nie znaleziona po positionId, szukam wszystkich wejść dla instancji ${instanceId}`
           );
 
-          // Utwórz nową pozycję bazując na danych z pamięci
-          const totalEntryAmount = activePosition.entries.reduce(
-            (sum, entry) => sum + (entry.amount || 0),
-            0
-          );
-          const newPosition = {
-            positionId:
-              activePosition.positionId ||
-              `position-${instanceId}-${Date.now()}`,
-            entrySignals: activePosition.entries.map((entry) => ({
-              signalId: entry.signalId,
-              amount:
-                entry.amount || entryAmount / activePosition.entries.length,
-              timestamp: new Date(entry.time || Date.now()),
-              subType: entry.type || "first",
-            })),
-            totalAmount: totalEntryAmount || entryAmount,
-            firstEntryTime: new Date(activePosition.entryTime || Date.now()),
-          };
+          // Znajdź wszystkie wykonane sygnały wejścia dla tej instancji w ostatnich 24 godzinach
+          const timeWindow = 24 * 60 * 60 * 1000; // 24 godziny
+          const searchStartTime = Date.now() - timeWindow;
 
-          // Dodaj pozycję do instancji
-          instance.financials.openPositions.push(newPosition);
-          positionIndex = instance.financials.openPositions.length - 1;
-          position = newPosition;
+          const allEntrySignals = await Signal.find({
+            instanceId: instanceId,
+            type: "entry",
+            status: "executed",
+            timestamp: { $gte: searchStartTime },
+          })
+            .sort({ timestamp: 1 })
+            .session(session);
 
           logger.info(
-            `Odtworzono pozycję w bazie danych: ${JSON.stringify(newPosition)}`
+            `🔍 Znaleziono ${allEntrySignals.length} sygnałów wejścia dla instancji ${instanceId} w ostatnich 24h`
           );
+
+          if (allEntrySignals.length > 0) {
+            // Grupuj sygnały po positionId (jeśli istnieje) lub weź wszystkie jako jedną grupę
+            const positionGroups = new Map();
+
+            for (const signal of allEntrySignals) {
+              const groupKey = signal.positionId || "default-group";
+
+              if (!positionGroups.has(groupKey)) {
+                positionGroups.set(groupKey, []);
+              }
+              positionGroups.get(groupKey).push(signal);
+            }
+
+            // Weź największą grupę (prawdopodobnie aktualna pozycja)
+            let largestGroup = [];
+            let largestGroupKey = null;
+
+            for (const [groupKey, signals] of positionGroups.entries()) {
+              if (signals.length > largestGroup.length) {
+                largestGroup = signals;
+                largestGroupKey = groupKey;
+              }
+            }
+
+            logger.info(
+              `📊 Największa grupa sygnałów: ${largestGroup.length} wejść (klucz: ${largestGroupKey})`
+            );
+
+            // Sprawdź czy między tymi wejściami nie było już sygnału wyjścia
+            const firstEntry = largestGroup[0];
+            const lastEntry = largestGroup[largestGroup.length - 1];
+
+            const exitSignalsBetween = await Signal.find({
+              instanceId: instanceId,
+              type: "exit",
+              status: "executed",
+              timestamp: {
+                $gte: firstEntry.timestamp,
+                $lte: lastEntry.timestamp + 60000, // +1 minuta bufor
+              },
+            }).session(session);
+
+            if (exitSignalsBetween.length === 0) {
+              // To są nasze wejścia bez zamknięcia - używaj ich
+              totalEntryAmount = largestGroup.reduce(
+                (sum, signal) => sum + (signal.amount || 0),
+                0
+              );
+
+              // Odtwórz pozycję w bazie na podstawie sygnałów
+              const reconstructedPosition = {
+                positionId: largestGroupKey,
+                entrySignals: largestGroup.map((signal) => ({
+                  signalId: signal._id.toString(),
+                  amount: signal.amount || 0,
+                  timestamp: new Date(signal.timestamp),
+                  subType: signal.subType || "unknown",
+                })),
+                totalAmount: totalEntryAmount,
+                firstEntryTime: new Date(firstEntry.timestamp),
+              };
+
+              instance.financials.openPositions.push(reconstructedPosition);
+              positionIndex = instance.financials.openPositions.length - 1;
+              position = reconstructedPosition;
+
+              logger.info(
+                `🔧 Odtworzono pozycję w bazie: ${largestGroup.length} wejść, suma: ${totalEntryAmount}`
+              );
+            } else {
+              logger.warn(
+                `⚠️ Znaleziono ${exitSignalsBetween.length} sygnałów wyjścia między wejściami - pozycja może być już zamknięta`
+              );
+            }
+          }
+        }
+
+        // STRATEGIA 3: Ostateczny fallback - użyj danych z pamięci RAM
+        if (!position && activePosition) {
+          logger.info(
+            `🔍 STRATEGIA 3: Używam danych z pamięci RAM jako ostateczny fallback`
+          );
+
+          if (activePosition.entries && activePosition.entries.length > 0) {
+            totalEntryAmount = activePosition.entries.reduce(
+              (sum, entry) => sum + (entry.amount || 0),
+              0
+            );
+
+            const fallbackPosition = {
+              positionId:
+                activePosition.positionId ||
+                `fallback-${instanceId}-${Date.now()}`,
+              entrySignals: activePosition.entries.map((entry) => ({
+                signalId: entry.signalId || `unknown-${Date.now()}`,
+                amount: entry.amount || 0,
+                timestamp: new Date(entry.time || Date.now()),
+                subType: entry.type || "unknown",
+              })),
+              totalAmount: totalEntryAmount,
+              firstEntryTime: new Date(activePosition.entryTime || Date.now()),
+            };
+
+            instance.financials.openPositions.push(fallbackPosition);
+            positionIndex = instance.financials.openPositions.length - 1;
+            position = fallbackPosition;
+
+            logger.info(
+              `🔧 Utworzono pozycję fallback z RAM: ${activePosition.entries.length} wejść, suma: ${totalEntryAmount}`
+            );
+          }
         }
 
         // Jeśli nadal nie mamy pozycji, rzuć błąd
         if (!position) {
           throw new Error(
-            `Nie znaleziono otwartej pozycji dla instancji ${instanceId}`
+            `❌ Nie znaleziono otwartej pozycji dla instancji ${instanceId} przy użyciu wszystkich strategii`
           );
-        }
-
-        // Oblicz łączną kwotę wejść z pamięci RAM (activePosition)
-
-        let totalEntryAmount = entryAmount; // fallback
-
-        if (
-          activePosition &&
-          activePosition.entries &&
-          activePosition.entries.length > 0
-        ) {
-          // Użyj danych z pamięci RAM - tu są WSZYSTKIE wejścia
-
-          totalEntryAmount = activePosition.entries.reduce(
-            (sum, entry) => sum + (entry.amount || 0),
-            0
-          );
-          logger.info(
-            `Używam danych z RAM: ${activePosition.entries.length} wejść, łączna kwota: ${totalEntryAmount}`
-          );
-        } else {
-          // Fallback na dane z bazy
-          totalEntryAmount =
-            position.totalAmount ||
-            position.entrySignals.reduce(
-              (sum, entry) => sum + entry.amount,
-              0
-            ) ||
-            entryAmount;
-          logger.warn(`Używam danych z bazy (fallback): ${totalEntryAmount}`);
         }
 
         // Oblicz zysk na podstawie rzeczywistej kwoty wejść i kwoty wyjścia
@@ -478,7 +543,7 @@ class AccountService extends EventEmitter {
         const profitPercent = (profit / totalEntryAmount) * 100;
 
         logger.info(
-          `Finalizacja pozycji: entryAmount=${totalEntryAmount}, exitAmount=${exitAmount}, profit=${profit}, profitPercent=${profitPercent}`
+          `💰 Finalizacja pozycji: entryAmount=${totalEntryAmount}, exitAmount=${exitAmount}, profit=${profit}, profitPercent=${profitPercent}`
         );
 
         // Pobierz szczegóły pozycji przed usunięciem
@@ -603,10 +668,9 @@ class AccountService extends EventEmitter {
         }
 
         logger.info(
-          `Sfinalizowano pozycję w instancji ${instanceId}. Zysk: ${profit}`
+          `✅ Sfinalizowano pozycję w instancji ${instanceId}. Zysk: ${profit}, unlocked amount: ${totalEntryAmount}`
         );
 
-        // SIMPLE SAFETY CHECK: Jeśli nie ma otwartych pozycji, wyzeruj lockedBalance
         // ENHANCED SAFETY CHECK: Sprawdź lockedBalance vs rzeczywiste otwarte pozycje
         const actualLockedAmount = instance.financials.openPositions
           ? instance.financials.openPositions.reduce(
@@ -619,11 +683,11 @@ class AccountService extends EventEmitter {
           Math.abs(instance.financials.lockedBalance - actualLockedAmount) >
           0.01
         ) {
-          logger.warn(`Wykryto rozbieżność w lockedBalance dla instancji ${instanceId}. 
-            Zapisane: ${instance.financials.lockedBalance}, 
-            Rzeczywiste z pozycji: ${actualLockedAmount}. 
-            Otwarte pozycje: ${instance.financials.openPositions?.length || 0}. 
-            Wykonuję agresywną korektę.`);
+          logger.warn(`⚠️ Wykryto rozbieżność w lockedBalance dla instancji ${instanceId}. 
+          Zapisane: ${instance.financials.lockedBalance}, 
+          Rzeczywiste z pozycji: ${actualLockedAmount}. 
+          Otwarte pozycje: ${instance.financials.openPositions?.length || 0}. 
+          Wykonuję korektę.`);
 
           const difference =
             instance.financials.lockedBalance - actualLockedAmount;
@@ -636,7 +700,7 @@ class AccountService extends EventEmitter {
           await instance.save({ session });
 
           logger.info(
-            `AGRESYWNA KOREKTA: Skorygowano lockedBalance o ${difference} dla instancji ${instanceId}`
+            `🔧 Skorygowano lockedBalance o ${difference} dla instancji ${instanceId}`
           );
         }
 
@@ -655,12 +719,11 @@ class AccountService extends EventEmitter {
 
         return { instance, user };
       } catch (error) {
-        logger.error(`Błąd podczas finalizacji pozycji: ${error.message}`);
+        logger.error(`❌ Błąd podczas finalizacji pozycji: ${error.message}`);
         throw error;
       }
     });
   }
-
   /**
    * Pobiera informacje o saldzie użytkownika
    * @param {string} userId - ID użytkownika
