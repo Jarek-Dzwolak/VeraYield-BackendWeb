@@ -280,6 +280,13 @@ class AccountService extends EventEmitter {
         logger.info(
           `Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}, pozycja: ${positionId}`
         );
+        // ✅ DODAJ TEN DEBUG
+        logger.info(`🔧 LOCK FUNDS SUMMARY dla ${instanceId}:
+          - amount: ${amount}
+          - PRZED: availableBalance=${instance.financials.availableBalance + amount}, lockedBalance=${instance.financials.lockedBalance - amount}
+          - PO: availableBalance=${instance.financials.availableBalance}, lockedBalance=${instance.financials.lockedBalance}
+          - openPositions count: ${instance.financials.openPositions?.length || 0}
+          - positionId użyty: ${positionId}`);
 
         // Emituj zdarzenie
         this.emit("fundsLocked", {
