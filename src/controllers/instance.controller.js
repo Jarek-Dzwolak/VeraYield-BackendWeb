@@ -122,9 +122,10 @@ const createInstance = async (req, res) => {
     // Dekoduj klucze API z Base64, jeśli są zaszyfrowane
     if (bybitConfig && bybitConfig.apiKey) {
       try {
-        bybitConfig.apiKey = atob(bybitConfig.apiKey);
+        bybitConfig.apiKey = Buffer.from(bybitConfig.apiKey, "base64").toString(
+          "utf8"
+        );
       } catch (error) {
-        // Jeśli dekodowanie się nie powiodło, pozostaw oryginalną wartość
         logger.debug(
           "API Key nie był zakodowany w Base64 lub błąd dekodowania"
         );
@@ -133,9 +134,11 @@ const createInstance = async (req, res) => {
 
     if (bybitConfig && bybitConfig.apiSecret) {
       try {
-        bybitConfig.apiSecret = atob(bybitConfig.apiSecret);
+        bybitConfig.apiSecret = Buffer.from(
+          bybitConfig.apiSecret,
+          "base64"
+        ).toString("utf8");
       } catch (error) {
-        // Jeśli dekodowanie się nie powiodło, pozostaw oryginalną wartość
         logger.debug(
           "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
         );
@@ -635,7 +638,7 @@ const updateBybitConfig = async (req, res) => {
 
     if (apiKey) {
       try {
-        decodedApiKey = atob(apiKey);
+        decodedApiKey = Buffer.from(apiKey, "base64").toString("utf8");
       } catch (error) {
         logger.debug(
           "API Key nie był zakodowany w Base64 lub błąd dekodowania"
@@ -645,7 +648,7 @@ const updateBybitConfig = async (req, res) => {
 
     if (apiSecret) {
       try {
-        decodedApiSecret = atob(apiSecret);
+        decodedApiSecret = Buffer.from(apiSecret, "base64").toString("utf8");
       } catch (error) {
         logger.debug(
           "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
