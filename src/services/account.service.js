@@ -583,6 +583,38 @@ class AccountService extends EventEmitter {
           `Sfinalizowano pozycję w instancji ${instanceId}. Zysk: ${profit}`
         );
 
+        // SAFETY CHECK: Walidacja i korekta lockedBalance
+        const actualLockedAmount = instance.financials.openPositions.reduce(
+          (sum, pos) => {
+            return sum + (pos.totalAmount || 0);
+          },
+          0
+        );
+
+        if (
+          Math.abs(instance.financials.lockedBalance - actualLockedAmount) >
+          0.01
+        ) {
+          logger.warn(`Wykryto rozbieżność w lockedBalance dla instancji ${instanceId}. 
+            Zapisane: ${instance.financials.lockedBalance}, 
+            Rzeczywiste: ${actualLockedAmount}. 
+            Wykonuję korektę.`);
+
+          const difference =
+            instance.financials.lockedBalance - actualLockedAmount;
+          instance.financials.lockedBalance = actualLockedAmount;
+          instance.financials.availableBalance += difference;
+          instance.financials.currentBalance =
+            instance.financials.availableBalance +
+            instance.financials.lockedBalance;
+
+          await instance.save({ session });
+
+          logger.info(
+            `Skorygowano lockedBalance o ${difference} dla instancji ${instanceId}`
+          );
+        }
+
         // Emituj zdarzenie
         this.emit("positionClosed", {
           instanceId,
