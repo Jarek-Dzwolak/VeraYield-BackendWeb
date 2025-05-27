@@ -204,7 +204,21 @@ class AccountService extends EventEmitter {
           logger.info(
             `📍 Kolejne wejście (${entryType}) dla pozycji: ${positionId}`
           );
+          // ✅ DODAJ TEN DEBUG
 
+          logger.info(`🔍 DEBUG BAZY przed wyszukiwaniem dla instanceId: ${instanceId}
+    Szukany positionId: ${positionId}
+    Pozycje w bazie (${instance.financials.openPositions.length}):
+    ${JSON.stringify(
+      instance.financials.openPositions.map((p, idx) => ({
+        index: idx,
+        positionId: p.positionId,
+        totalAmount: p.totalAmount,
+        hasPositionId: !!p.positionId,
+      })),
+      null,
+      2
+    )}`);
           // Znajdź pozycję w bazie PO POSITION ID
           let positionIndex = instance.financials.openPositions.findIndex(
             (p) => p.positionId === positionId
