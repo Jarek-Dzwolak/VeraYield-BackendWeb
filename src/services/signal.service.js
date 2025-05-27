@@ -111,7 +111,23 @@ class SignalService extends EventEmitter {
     try {
       const { instanceId, type, price, timestamp, trend } = signalData;
 
+      // ✅ DODAJ DEBUG LOG NA POCZĄTKU
+      logger.info(`🚀 processEntrySignal START dla instanceId: ${instanceId}
+      - type: ${type}
+      - timestamp: ${timestamp}
+      - price: ${price}`);
+
       let currentPosition = this.activePositions.get(instanceId);
+
+      // ✅ DODAJ DEBUG LOG DLA CURRENT POSITION
+      logger.info(`📍 Current position dla ${instanceId}: ${currentPosition ? "ISTNIEJE" : "BRAK"}
+      ${
+        currentPosition
+          ? `- positionId: ${currentPosition.positionId}
+      - entries count: ${currentPosition.entries?.length || 0}
+      - status: ${currentPosition.status}`
+          : ""
+      }`);
 
       const instance = await Instance.findOne({ instanceId });
 
