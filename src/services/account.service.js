@@ -195,19 +195,23 @@ class AccountService extends EventEmitter {
         let positionId;
         let entryType = "first";
 
-        // Sprawdź, czy mamy już otwartą pozycję dla tej instancji
-        if (activePosition) {
-          // To jest kolejne wejście - użyj istniejącego ID pozycji
-          positionId = activePosition.positionId || `position-${instanceId}`;
+        // ✅ NOWA LOGIKA - UJEDNOLICONA
+        if (activePosition && activePosition.positionId) {
+          // To kolejne wejście - używamy positionId z pamięci
+          positionId = activePosition.positionId;
           entryType = activePosition.entries.length === 1 ? "second" : "third";
 
-          // Znajdź istniejącą pozycję w bazie danych
-          const positionIndex = instance.financials.openPositions.findIndex(
+          logger.info(
+            `📍 Kolejne wejście (${entryType}) dla pozycji: ${positionId}`
+          );
+
+          // Znajdź pozycję w bazie PO POSITION ID
+          let positionIndex = instance.financials.openPositions.findIndex(
             (p) => p.positionId === positionId
           );
 
           if (positionIndex !== -1) {
-            // Dodaj nowy sygnał do istniejącej pozycji
+            // Aktualizuj istniejącą pozycję
             instance.financials.openPositions[positionIndex].entrySignals.push({
               signalId,
               amount,
@@ -218,10 +222,14 @@ class AccountService extends EventEmitter {
               amount;
 
             logger.info(
-              `Dodano kolejny sygnał wejścia do istniejącej pozycji: ${positionId}, typ: ${entryType}`
+              `✅ Zaktualizowano istniejącą pozycję na indeksie ${positionIndex}, nowa suma: ${instance.financials.openPositions[positionIndex].totalAmount}`
             );
           } else {
-            // Utwórz nową pozycję, jeśli nie znaleziono (sytuacja niestandardowa)
+            // Pozycja nie znaleziona w bazie - utwórz nową z tym samym positionId
+            logger.warn(
+              `⚠️ Pozycja ${positionId} nie znaleziona w bazie, tworzę nową`
+            );
+
             instance.financials.openPositions.push({
               positionId,
               entrySignals: [
@@ -237,7 +245,7 @@ class AccountService extends EventEmitter {
             });
 
             logger.info(
-              `Utworzono nową pozycję (mimo że istnieje w pamięci): ${positionId}, typ: ${entryType}`
+              `🔧 Utworzono nową pozycję w bazie z istniejącym positionId: ${positionId}`
             );
           }
         } else {
@@ -258,7 +266,7 @@ class AccountService extends EventEmitter {
             firstEntryTime: new Date(),
           });
 
-          logger.info(`Utworzono nową pozycję handlową: ${positionId}`);
+          logger.info(`🆕 Utworzono nową pozycję: ${positionId}`);
         }
 
         // Aktualizuj bilans instancji
@@ -273,20 +281,13 @@ class AccountService extends EventEmitter {
           signal.amount = amount;
           signal.status = "executed";
           signal.executedAt = new Date();
-          signal.positionId = positionId; // Dodaj referencję do pozycji
+          signal.positionId = positionId;
           await signal.save({ session });
         }
 
         logger.info(
-          `Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}, pozycja: ${positionId}`
+          `💰 Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}, pozycja: ${positionId}`
         );
-        // ✅ DODAJ TEN DEBUG
-        logger.info(`🔧 LOCK FUNDS SUMMARY dla ${instanceId}:
-          - amount: ${amount}
-          - PRZED: availableBalance=${instance.financials.availableBalance + amount}, lockedBalance=${instance.financials.lockedBalance - amount}
-          - PO: availableBalance=${instance.financials.availableBalance}, lockedBalance=${instance.financials.lockedBalance}
-          - openPositions count: ${instance.financials.openPositions?.length || 0}
-          - positionId użyty: ${positionId}`);
 
         // Emituj zdarzenie
         this.emit("fundsLocked", {
