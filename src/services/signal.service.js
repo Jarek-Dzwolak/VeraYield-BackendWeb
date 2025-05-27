@@ -379,6 +379,20 @@ class SignalService extends EventEmitter {
         // ✅ NAPRAWKA: Używaj positionId z aktywnej pozycji
         const positionId = currentPosition.positionId;
 
+        // ✅ DODAJ DEBUG
+        logger.info(`🔑 POSITION ID DEBUG dla ${entryType}:
+  - currentPosition.positionId: ${currentPosition.positionId}
+  - positionId używany: ${positionId}
+  - currentPosition: ${JSON.stringify(currentPosition, null, 2)}`);
+
+        if (!positionId) {
+          logger.error(`❌ BŁĄD: currentPosition.positionId jest undefined!`);
+          // Fallback - użyj generowania
+          const fallbackPositionId = `position-${instanceId}-${Date.now()}`;
+          logger.error(`Używam fallback positionId: ${fallbackPositionId}`);
+          positionId = fallbackPositionId;
+        }
+
         logger.info(`
         ${entryType.toUpperCase()} wejście dla ${instanceId}:
         - Pozostały bilans: ${remainingBalance}
