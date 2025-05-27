@@ -119,7 +119,28 @@ const createInstance = async (req, res) => {
       instanceId: uuidv4(), // Generuj nowy UUID
       bybitConfig: bybitConfig || {}, // Dodaj konfigurację ByBit
     };
+    // Dekoduj klucze API z Base64, jeśli są zaszyfrowane
+    if (bybitConfig && bybitConfig.apiKey) {
+      try {
+        bybitConfig.apiKey = atob(bybitConfig.apiKey);
+      } catch (error) {
+        // Jeśli dekodowanie się nie powiodło, pozostaw oryginalną wartość
+        logger.debug(
+          "API Key nie był zakodowany w Base64 lub błąd dekodowania"
+        );
+      }
+    }
 
+    if (bybitConfig && bybitConfig.apiSecret) {
+      try {
+        bybitConfig.apiSecret = atob(bybitConfig.apiSecret);
+      } catch (error) {
+        // Jeśli dekodowanie się nie powiodło, pozostaw oryginalną wartość
+        logger.debug(
+          "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
+        );
+      }
+    }
     // Utwórz instancję
     const instance = await instanceService.createInstance(config);
 
@@ -608,6 +629,30 @@ const updateBybitConfig = async (req, res) => {
     const { instanceId } = req.params;
     const { apiKey, apiSecret, leverage, marginMode, testnet } = req.body;
 
+    // Dekoduj klucze API z Base64, jeśli są zaszyfrowane
+    let decodedApiKey = apiKey;
+    let decodedApiSecret = apiSecret;
+
+    if (apiKey) {
+      try {
+        decodedApiKey = atob(apiKey);
+      } catch (error) {
+        logger.debug(
+          "API Key nie był zakodowany w Base64 lub błąd dekodowania"
+        );
+      }
+    }
+
+    if (apiSecret) {
+      try {
+        decodedApiSecret = atob(apiSecret);
+      } catch (error) {
+        logger.debug(
+          "API Secret nie był zakodowany w Base64 lub błąd dekodowania"
+        );
+      }
+    }
+
     const instance = await Instance.findOne({ instanceId });
 
     if (!instance) {
@@ -619,8 +664,8 @@ const updateBybitConfig = async (req, res) => {
 
     // Aktualizuj konfigurację ByBit
     instance.bybitConfig = {
-      apiKey,
-      apiSecret,
+      apiKey: decodedApiKey,
+      apiSecret: decodedApiSecret,
       leverage: leverage || 3,
       marginMode: marginMode || "isolated",
       testnet: testnet !== false,
