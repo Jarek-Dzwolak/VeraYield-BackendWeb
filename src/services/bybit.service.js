@@ -1,7 +1,3 @@
-/**
- * ByBit Service - serwis do wystawiania zleceń na ByBit
- */
-
 const crypto = require("crypto");
 const axios = require("axios");
 const logger = require("../utils/logger");
@@ -12,13 +8,10 @@ class ByBitService {
       process.env.BYBIT_TESTNET === "true"
         ? "https://api-testnet.bybit.com"
         : "https://api.bybit.com";
-    this.instrumentInfoCache = new Map(); // Keszowanie informacji o instrumentach
-    this.instrumentCacheExpiry = 3600000; // 1 godzina w ms
+    this.instrumentInfoCache = new Map();
+    this.instrumentCacheExpiry = 3600000;
   }
 
-  /**
-   * Tworzy podpis dla żądania
-   */
   createSignature(apiKey, apiSecret, params, method = "GET") {
     const timestamp = Date.now().toString();
     const recvWindow = "5000";
@@ -26,10 +19,8 @@ class ByBitService {
     let paramStr = "";
 
     if (method === "POST") {
-      // Dla POST użyj JSON string
       paramStr = JSON.stringify(params);
     } else {
-      // Dla GET użyj query string
       paramStr = Object.keys(params)
         .sort()
         .map((key) => `${key}=${params[key]}`)
@@ -46,15 +37,10 @@ class ByBitService {
     return { sign, timestamp };
   }
 
-  /**
-   * Wykonuje żądanie do API ByBit
-   */
   async makeRequest(method, endpoint, apiKey, apiSecret, params = {}) {
     try {
-      // Stwórz kopię parametrów, żeby nie modyfikować oryginału
       const paramsCopy = { ...params };
 
-      // Jeśli jest subaccountId, wyciągnij go przed utworzeniem podpisu
       const subaccountId = paramsCopy.subaccountId;
       if (subaccountId) {
         delete paramsCopy.subaccountId;
@@ -75,7 +61,6 @@ class ByBitService {
         "Content-Type": "application/json",
       };
 
-      // Dodaj Referer dla subkonta jeśli istnieje
       if (subaccountId) {
         headers["Referer"] = "ref-subaccount-" + subaccountId;
       }
@@ -109,12 +94,8 @@ class ByBitService {
     }
   }
 
-  /**
-   * Pobiera saldo konta
-   */
   async getBalance(apiKey, apiSecret, subUid = null) {
     try {
-      // Sprawdzamy UNIFIED account (tam są środki)
       const response = await this.makeRequest(
         "GET",
         "/v5/asset/transfer/query-account-coins-balance",
@@ -151,7 +132,6 @@ class ByBitService {
       logger.error(`Error getting balance: ${error.message}`);
     }
 
-    // Zwróć zero jeśli błąd lub brak środków
     return {
       retCode: 0,
       result: {
@@ -171,9 +151,6 @@ class ByBitService {
     };
   }
 
-  /**
-   * Pobiera aktualny tryb pozycji konta
-   */
   async getPositionMode(apiKey, apiSecret, subaccountId = null) {
     try {
       const params = {
@@ -193,7 +170,7 @@ class ByBitService {
       );
 
       if (response.retCode === 0) {
-        return response.result.mode; // 0: Merged Single (One-Way), 3: Both Sides (Hedge)
+        return response.result.mode;
       }
 
       return null;
@@ -203,15 +180,12 @@ class ByBitService {
     }
   }
 
-  /**
-   * Ustawia tryb pozycji konta (One-Way Mode)
-   */
   async setPositionMode(apiKey, apiSecret, subaccountId = null) {
     try {
       const params = {
         category: "linear",
-        coin: "USDT", // Wymagane przy przełączaniu globalnego trybu pozycji
-        mode: 0, // 0: Merged Single (One-Way Mode)
+        coin: "USDT",
+        mode: 0,
       };
 
       if (subaccountId) {
@@ -236,9 +210,6 @@ class ByBitService {
     }
   }
 
-  /**
-   * Otwiera pozycję futures (Market Order) - zawsze używa One-Way Mode
-   */
   async openPosition(
     apiKey,
     apiSecret,
@@ -249,21 +220,19 @@ class ByBitService {
     subaccountId = null
   ) {
     try {
-      // Najpierw upewnij się, że konto jest w trybie One-Way Mode
       await this.setPositionMode(apiKey, apiSecret, subaccountId);
 
       const params = {
         category: "linear",
         symbol: symbol,
-        side: side, // 'Buy' lub 'Sell'
+        side: side,
         orderType: "Market",
         qty: quantity.toString(),
-        positionIdx: 0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+        positionIdx: 0,
         timeInForce: "IOC",
         closeOnTrigger: false,
       };
 
-      // Dodaj subaccountId jeśli został przekazany
       if (subaccountId) {
         params.subaccountId = subaccountId;
       }
@@ -281,9 +250,6 @@ class ByBitService {
     }
   }
 
-  /**
-   * Zamyka pozycję futures - zawsze używa One-Way Mode
-   */
   async closePosition(
     apiKey,
     apiSecret,
@@ -302,12 +268,11 @@ class ByBitService {
         side: closeSide,
         orderType: "Market",
         qty: quantity.toString(),
-        positionIdx: 0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+        positionIdx: 0,
         timeInForce: "IOC",
-        closeOnTrigger: true, // Ustawione na true dla zamykania pozycji
+        closeOnTrigger: true,
       };
 
-      // Dodaj subaccountId jeśli został przekazany
       if (subaccountId) {
         params.subaccountId = subaccountId;
       }
@@ -325,9 +290,37 @@ class ByBitService {
     }
   }
 
-  /**
-   * Ustawia dźwignię dla symbolu
-   */
+  async getPositionSize(apiKey, apiSecret, symbol, subaccountId = null) {
+    try {
+      const params = {
+        category: "linear",
+        symbol: symbol,
+      };
+
+      if (subaccountId) {
+        params.subaccountId = subaccountId;
+      }
+
+      const response = await this.makeRequest(
+        "GET",
+        "/v5/position/list",
+        apiKey,
+        apiSecret,
+        params
+      );
+
+      if (response.retCode === 0 && response.result.list.length > 0) {
+        const position = response.result.list[0];
+        return parseFloat(position.size || "0");
+      }
+
+      return 0;
+    } catch (error) {
+      logger.error(`Error getting position size: ${error.message}`);
+      throw error;
+    }
+  }
+
   async setLeverage(apiKey, apiSecret, symbol, leverage) {
     const params = {
       category: "linear",
@@ -345,14 +338,11 @@ class ByBitService {
     );
   }
 
-  /**
-   * Ustawia tryb marginu (isolated/cross)
-   */
   async setMarginMode(apiKey, apiSecret, symbol, tradeMode) {
     const params = {
       category: "linear",
       symbol: symbol,
-      tradeMode: tradeMode, // 0=cross, 1=isolated
+      tradeMode: tradeMode,
     };
 
     return this.makeRequest(
@@ -364,9 +354,6 @@ class ByBitService {
     );
   }
 
-  /**
-   * Pobiera aktualną cenę
-   */
   async getCurrentPrice(symbol) {
     try {
       const response = await axios.get(`${this.baseUrl}/v5/market/tickers`, {
@@ -387,9 +374,6 @@ class ByBitService {
     }
   }
 
-  /**
-   * Pobiera informacje o instrumencie handlowym (limity, krok wielkości itp.)
-   */
   async getInstrumentInfo(symbol) {
     try {
       const response = await axios.get(
@@ -405,7 +389,6 @@ class ByBitService {
       if (response.data.retCode === 0 && response.data.result.list.length > 0) {
         const instrument = response.data.result.list[0];
 
-        // Pobierz filtry dla wielkości zlecenia (lotSizeFilter)
         const lotSizeFilter = instrument.lotSizeFilter || {};
 
         return {
@@ -417,7 +400,6 @@ class ByBitService {
         };
       }
 
-      // Jeśli nie znaleziono informacji, zwróć domyślne wartości dla BTC/USDT
       logger.warn(
         `Nie znaleziono informacji o instrumencie ${symbol}, używam domyślnych wartości`
       );
@@ -430,7 +412,6 @@ class ByBitService {
       };
     } catch (error) {
       logger.error(`Error fetching instrument info: ${error.message}`);
-      // Zwróć domyślne wartości dla BTC/USDT w przypadku błędu
       return {
         symbol: symbol,
         minOrderQty: 0.001,
@@ -441,11 +422,7 @@ class ByBitService {
     }
   }
 
-  /**
-   * Pobiera zakeszowane informacje o instrumencie (dla optymalizacji wydajności)
-   */
   async getCachedInstrumentInfo(symbol) {
-    // Sprawdź, czy mamy zakeszowane informacje i czy nie wygasły
     const cached = this.instrumentInfoCache.get(symbol);
     const now = Date.now();
 
@@ -453,10 +430,8 @@ class ByBitService {
       return cached.data;
     }
 
-    // Pobierz nowe informacje z API
     const instrumentInfo = await this.getInstrumentInfo(symbol);
 
-    // Zakeszuj nowe informacje
     this.instrumentInfoCache.set(symbol, {
       data: instrumentInfo,
       timestamp: now,

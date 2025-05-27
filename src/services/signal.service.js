@@ -1,12 +1,3 @@
-/**
- * Signal Service - serwis do zarządzania sygnałami handlowymi
- *
- * Odpowiedzialny za:
- * - Przetwarzanie sygnałów z serwisu analizy
- * - Generowanie i filtrowanie sygnałów handlowych
- * - Przechowywanie sygnałów w bazie danych
- * - Współpracę z AccountService w zakresie zarządzania środkami
- */
 const bybitService = require("./bybit.service");
 const analysisService = require("./analysis.service");
 const accountService = require("./account.service");
@@ -19,36 +10,23 @@ const instanceService = require("./instance.service");
 class SignalService extends EventEmitter {
   constructor() {
     super();
-    this.activePositions = new Map(); // Mapa aktywnych pozycji (instanceId -> positionData)
-    this.positionHistory = new Map(); // Mapa historii pozycji (instanceId -> [positionData])
-    this.lastEntryTimes = new Map(); // Mapa czasów ostatniego wejścia (instanceId -> timestamp)
+    this.activePositions = new Map();
+    this.positionHistory = new Map();
+    this.lastEntryTimes = new Map();
     this.setupListeners();
   }
 
-  /**
-   * Konfiguruje nasłuchiwanie zdarzeń z serwisu analizy
-   */
   setupListeners() {
-    // Nasłuchuj sygnałów wejścia
     analysisService.on("entrySignal", (data) => {
       this.processEntrySignal(data);
     });
 
-    // Nasłuchuj sygnałów wyjścia
     analysisService.on("exitSignal", (data) => {
       this.processExitSignal(data);
     });
   }
 
-  /**
-   * Dostosowuje wielkość kontraktu zgodnie z ograniczeniami Bybit
-   * @private
-   * @param {number} theoreticalQuantity - Teoretyczna wielkość kontraktu
-   * @param {Object} instrumentInfo - Informacje o instrumencie z Bybit
-   * @returns {number} - Dostosowana wielkość kontraktu
-   */
   async _adjustContractQuantity(theoreticalQuantity, instrumentInfo) {
-    // Jeśli nie mamy informacji o instrumencie, użyj domyślnych wartości dla BTC
     if (!instrumentInfo) {
       instrumentInfo = {
         minOrderQty: 0.001,
@@ -56,7 +34,6 @@ class SignalService extends EventEmitter {
       };
     }
 
-    // Sprawdź, czy teoretyczna wielkość jest poniżej minimalnej
     if (theoreticalQuantity < instrumentInfo.minOrderQty) {
       logger.debug(
         `Wielkość kontraktu ${theoreticalQuantity} poniżej minimum ${instrumentInfo.minOrderQty}, używam wartości minimalnej`
@@ -64,11 +41,9 @@ class SignalService extends EventEmitter {
       return instrumentInfo.minOrderQty;
     }
 
-    // Zaokrąglij do najbliższej wielokrotności qtyStep
     const steps = Math.floor(theoreticalQuantity / instrumentInfo.qtyStep);
     const adjustedQuantity = steps * instrumentInfo.qtyStep;
 
-    // Sprawdź, czy zaokrąglona wartość nadal spełnia minimalne wymagania
     if (adjustedQuantity < instrumentInfo.minOrderQty) {
       logger.debug(
         `Zaokrąglona wielkość ${adjustedQuantity} poniżej minimum, używam wartości minimalnej`
@@ -76,23 +51,12 @@ class SignalService extends EventEmitter {
       return instrumentInfo.minOrderQty;
     }
 
-    // Sformatuj do odpowiedniej liczby miejsc po przecinku
-    // Oblicz precyzję na podstawie qtyStep
     const stepStr = instrumentInfo.qtyStep.toString();
     const precision = stepStr.includes(".") ? stepStr.split(".")[1].length : 0;
 
     return parseFloat(adjustedQuantity.toFixed(precision));
   }
 
-  /**
-   * Oblicza rzeczywisty procent alokacji po dostosowaniu wielkości kontraktu
-   * @private
-   * @param {number} adjustedQuantity - Dostosowana wielkość kontraktu
-   * @param {number} price - Aktualna cena
-   * @param {number} leverage - Dźwignia
-   * @param {number} availableBalance - Dostępny bilans
-   * @returns {number} - Rzeczywisty procent alokacji (0-100)
-   */
   _calculateActualAllocationPercent(
     adjustedQuantity,
     price,
@@ -105,16 +69,6 @@ class SignalService extends EventEmitter {
     return (marginUsed / availableBalance) * 100;
   }
 
-  /**
-   * Oblicza optymalną wielkość kontraktu dla danego procentu alokacji
-   * @private
-   * @param {number} allocationPercent - Procent alokacji (0-100)
-   * @param {number} availableBalance - Dostępny bilans
-   * @param {number} price - Aktualna cena
-   * @param {number} leverage - Dźwignia
-   * @param {Object} instrumentInfo - Informacje o instrumencie
-   * @returns {Object} - Informacje o obliczonej wielkości
-   */
   async _calculateOptimalContractQuantity(
     allocationPercent,
     availableBalance,
@@ -122,21 +76,16 @@ class SignalService extends EventEmitter {
     leverage,
     instrumentInfo
   ) {
-    // Oblicz teoretyczną alokację
     const allocationFraction = allocationPercent / 100;
     const theoreticalMargin = availableBalance * allocationFraction;
     const theoreticalPosition = theoreticalMargin * leverage;
-
-    // Oblicz teoretyczną wielkość kontraktu
     const theoreticalQuantity = theoreticalPosition / price;
 
-    // Dostosuj wielkość kontraktu do ograniczeń Bybit
     const adjustedQuantity = await this._adjustContractQuantity(
       theoreticalQuantity,
       instrumentInfo
     );
 
-    // Oblicz rzeczywisty procent alokacji
     const actualAllocationPercent = this._calculateActualAllocationPercent(
       adjustedQuantity,
       price,
@@ -144,11 +93,9 @@ class SignalService extends EventEmitter {
       availableBalance
     );
 
-    // Oblicz rzeczywistą wartość pozycji i marginu
     const actualPosition = adjustedQuantity * price;
     const actualMargin = actualPosition / leverage;
 
-    // Zwróć wszystkie informacje
     return {
       theoreticalQuantity,
       adjustedQuantity,
@@ -160,18 +107,12 @@ class SignalService extends EventEmitter {
     };
   }
 
-  /**
-   * Przetwarza sygnał wejścia
-   * @param {Object} signalData - Dane sygnału wejścia
-   */
   async processEntrySignal(signalData) {
     try {
       const { instanceId, type, price, timestamp, trend } = signalData;
 
-      // Pobierz bieżący stan pozycji dla instancji
-      const currentPosition = this.activePositions.get(instanceId);
+      let currentPosition = this.activePositions.get(instanceId);
 
-      // Pobierz instancję, aby uzyskać dostęp do informacji o finansach i parametrach
       const instance = await Instance.findOne({ instanceId });
 
       if (!instance) {
@@ -179,7 +120,6 @@ class SignalService extends EventEmitter {
         return;
       }
 
-      // Sprawdź, czy instancja ma dane finansowe
       if (!instance.financials || instance.financials.availableBalance <= 0) {
         logger.warn(
           `Instancja ${instanceId} nie ma dostępnych środków - pominięto sygnał wejścia`
@@ -187,34 +127,26 @@ class SignalService extends EventEmitter {
         return;
       }
 
-      // Pobierz parametry strategii
       const strategyParams = instance.strategy.parameters;
 
-      // Pobierz parametry alokacji kapitału
       const firstEntryPercent =
-        strategyParams.capitalAllocation?.firstEntry * 100 || 10; // 10%
+        strategyParams.capitalAllocation?.firstEntry * 100 || 10;
       const secondEntryPercent =
-        strategyParams.capitalAllocation?.secondEntry * 100 || 25; // 25%
+        strategyParams.capitalAllocation?.secondEntry * 100 || 25;
       const thirdEntryPercent =
-        strategyParams.capitalAllocation?.thirdEntry * 100 || 50; // 50%
+        strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
 
-      // Pobierz minimalny odstęp czasowy między wejściami (domyślnie 2 godziny)
       const minEntryTimeGap =
-        strategyParams.signals?.minEntryTimeGap || 7200000; // 2h w ms
+        strategyParams.signals?.minEntryTimeGap || 7200000;
 
-      // Pobierz aktualną cenę i informacje o instrumencie z Bybit
       const currentPrice = await bybitService.getCurrentPrice(instance.symbol);
       const instrumentInfo = await bybitService.getCachedInstrumentInfo(
         instance.symbol
       );
 
-      // Oblicz dostępną dźwignię
       const leverage = instance.bybitConfig?.leverage || 3;
 
       if (!currentPosition) {
-        // --- PIERWSZE WEJŚCIE ---
-
-        // Sprawdź, czy trend pozwala na wejście (jeśli włączone filtrowanie trendu)
         const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
 
         if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
@@ -222,7 +154,6 @@ class SignalService extends EventEmitter {
             `Ignorowanie sygnału wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
           );
 
-          // Zapisz informację o odrzuconym sygnale
           await this.createSignalInDatabase({
             instanceId,
             symbol: instance.symbol,
@@ -237,10 +168,8 @@ class SignalService extends EventEmitter {
           return;
         }
 
-        // Wygeneruj unikalny identyfikator pozycji
         const positionId = `position-${instanceId}-${Date.now()}`;
 
-        // Oblicz optymalną wielkość pierwszego wejścia
         const optimalEntry = await this._calculateOptimalContractQuantity(
           firstEntryPercent,
           instance.financials.availableBalance,
@@ -257,14 +186,13 @@ class SignalService extends EventEmitter {
           - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
         `);
 
-        // Utwórz nowy sygnał w bazie danych
         const signal = await this.createSignalInDatabase({
           instanceId,
           symbol: instance.symbol,
           type: "entry",
           subType: "first",
           price,
-          allocation: optimalEntry.actualAllocationPercent / 100, // Zapisz rzeczywistą alokację
+          allocation: optimalEntry.actualAllocationPercent / 100,
           amount: optimalEntry.actualMargin,
           timestamp,
           status: "pending",
@@ -278,7 +206,6 @@ class SignalService extends EventEmitter {
           positionId: positionId,
         });
 
-        // Zablokuj środki na pozycję
         try {
           await accountService.lockFundsForPosition(
             instanceId,
@@ -286,10 +213,8 @@ class SignalService extends EventEmitter {
             signal._id
           );
 
-          // Wystaw prawdziwe zlecenie na ByBit
           if (instance.bybitConfig && instance.bybitConfig.apiKey) {
             try {
-              // Ustaw dźwignię i margin mode
               await bybitService.setLeverage(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
@@ -303,19 +228,19 @@ class SignalService extends EventEmitter {
                 instance.symbol,
                 instance.bybitConfig.marginMode === "isolated" ? 1 : 0
               );
-              // Otwórz pozycję z dostosowaną wielkością - dla pierwszego wejścia
+
               const orderResult = await bybitService.openPosition(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
                 "Buy",
                 optimalEntry.adjustedQuantity.toString(),
-                0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+                0,
                 instance.bybitConfig.subaccountId
               );
+
               logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
 
-              // Zapisz ID zlecenia w metadanych sygnału
               signal.metadata.bybitOrderId = orderResult.result?.orderId;
               signal.metadata.bybitOrderLinkId =
                 orderResult.result?.orderLinkId;
@@ -326,7 +251,6 @@ class SignalService extends EventEmitter {
             }
           }
 
-          // Utwórz nową pozycję w pamięci
           const newPosition = {
             instanceId,
             symbol: instance.symbol,
@@ -344,23 +268,18 @@ class SignalService extends EventEmitter {
                 trend,
                 allocation: optimalEntry.actualAllocationPercent / 100,
                 amount: optimalEntry.actualMargin,
-                signalId: signal._id,
+                signalId: signal._id.toString(),
                 contractQuantity: optimalEntry.adjustedQuantity,
+                positionId: positionId,
               },
             ],
             history: [],
           };
 
-          // Zapisz pozycję
           this.activePositions.set(instanceId, newPosition);
-
-          // Zapisz czas ostatniego wejścia
           this.lastEntryTimes.set(instanceId, timestamp);
-
-          // Reset Trailing stopa
           analysisService.resetTrailingStopTracking(instanceId);
 
-          // Emituj zdarzenie
           this.emit("newPosition", newPosition);
 
           logger.info(
@@ -371,7 +290,6 @@ class SignalService extends EventEmitter {
             `Nie udało się zablokować środków dla pozycji: ${error.message}`
           );
 
-          // Oznacz sygnał jako anulowany
           await Signal.findByIdAndUpdate(signal._id, {
             status: "canceled",
             metadata: {
@@ -380,12 +298,8 @@ class SignalService extends EventEmitter {
           });
         }
       } else if (currentPosition.status === "active") {
-        // --- DRUGIE LUB TRZECIE WEJŚCIE ---
-
-        // Określ typ wejścia na podstawie liczby dotychczasowych wejść
         const entryCount = currentPosition.entries.length;
 
-        // Sprawdź, czy limit wejść nie został osiągnięty
         if (entryCount >= 3) {
           logger.info(
             `Ignorowanie sygnału wejścia dla instancji ${instanceId} - osiągnięto limit 3 wejść`
@@ -393,7 +307,6 @@ class SignalService extends EventEmitter {
           return;
         }
 
-        // Sprawdź minimalny odstęp czasowy od poprzedniego wejścia
         const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
 
         if (timestamp - lastEntryTime < minEntryTimeGap) {
@@ -403,7 +316,6 @@ class SignalService extends EventEmitter {
           return;
         }
 
-        // Sprawdź, czy trend pozwala na wejście (jeśli włączone filtrowanie trendu)
         const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
 
         if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
@@ -411,7 +323,6 @@ class SignalService extends EventEmitter {
             `Ignorowanie sygnału kolejnego wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
           );
 
-          // Zapisz informację o odrzuconym sygnale w DB
           await this.createSignalInDatabase({
             instanceId,
             symbol: instance.symbol,
@@ -426,30 +337,19 @@ class SignalService extends EventEmitter {
           return;
         }
 
-        // Oblicz już zużytą część kapitału
-        const usedCapital = currentPosition.entries.reduce(
-          (sum, entry) => sum + entry.amount,
-          0
-        );
-
-        // Oblicz pozostały dostępny kapitał
         const remainingBalance = instance.financials.availableBalance;
 
-        // Określ alokację kapitału i typ wejścia
         let allocationPercent = 0;
         let entryType = "";
 
         if (entryCount === 1) {
-          // Drugie wejście - % z AKTUALNIE dostępnych środków
           allocationPercent = secondEntryPercent;
           entryType = "second";
         } else if (entryCount === 2) {
-          // Trzecie wejście - % z AKTUALNIE dostępnych środków
           allocationPercent = thirdEntryPercent;
           entryType = "third";
         }
 
-        // Oblicz optymalną wielkość kontraktu
         const optimalEntry = await this._calculateOptimalContractQuantity(
           allocationPercent,
           remainingBalance,
@@ -467,7 +367,8 @@ class SignalService extends EventEmitter {
           - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
         `);
 
-        // Utwórz sygnał w bazie danych
+        const positionId = `position-${instanceId}-${Date.now()}`;
+
         const signal = await this.createSignalInDatabase({
           instanceId,
           symbol: currentPosition.symbol,
@@ -484,10 +385,9 @@ class SignalService extends EventEmitter {
             theoreticalQuantity: optimalEntry.theoreticalQuantity,
             adjustedQuantity: optimalEntry.adjustedQuantity,
           },
-          positionId: currentPosition.positionId,
+          positionId: positionId,
         });
 
-        // Zablokuj środki na pozycję
         try {
           await accountService.lockFundsForPosition(
             instanceId,
@@ -495,23 +395,20 @@ class SignalService extends EventEmitter {
             signal._id
           );
 
-          // Wystaw prawdziwe zlecenie na ByBit
           if (instance.bybitConfig && instance.bybitConfig.apiKey) {
             try {
-              // Otwórz pozycję z dostosowaną wielkością - dla pierwszego wejścia
               const orderResult = await bybitService.openPosition(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
                 instance.symbol,
                 "Buy",
                 optimalEntry.adjustedQuantity.toString(),
-                0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+                0,
                 instance.bybitConfig.subaccountId
               );
 
               logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
 
-              // Zapisz ID zlecenia w metadanych sygnału
               signal.metadata.bybitOrderId = orderResult.result?.orderId;
               signal.metadata.bybitOrderLinkId =
                 orderResult.result?.orderLinkId;
@@ -522,7 +419,6 @@ class SignalService extends EventEmitter {
             }
           }
 
-          // Dodaj nowe wejście do pozycji
           currentPosition.entries.push({
             time: timestamp,
             price,
@@ -530,19 +426,17 @@ class SignalService extends EventEmitter {
             trend,
             allocation: optimalEntry.actualAllocationPercent / 100,
             amount: optimalEntry.actualMargin,
-            signalId: signal._id,
+            signalId: signal._id.toString(),
             contractQuantity: optimalEntry.adjustedQuantity,
+            positionId: positionId,
           });
 
-          // Zaktualizuj alokację kapitału i całkowitą kwotę
           currentPosition.capitalAllocation +=
             optimalEntry.actualAllocationPercent / 100;
           currentPosition.capitalAmount += optimalEntry.actualMargin;
 
-          // Zapisz czas ostatniego wejścia
           this.lastEntryTimes.set(instanceId, timestamp);
 
-          // Emituj zdarzenie
           this.emit("positionUpdated", currentPosition);
 
           logger.info(
@@ -553,7 +447,6 @@ class SignalService extends EventEmitter {
             `Nie udało się zablokować środków dla dodatkowego wejścia: ${error.message}`
           );
 
-          // Oznacz sygnał jako anulowany
           await Signal.findByIdAndUpdate(signal._id, {
             status: "canceled",
             metadata: {
@@ -569,32 +462,16 @@ class SignalService extends EventEmitter {
     }
   }
 
-  /**
-   * Sprawdza, czy trend jest odpowiedni do wejścia (zgodnie z logiką backtestingową)
-   * @param {string} trend - Trend z określenia trendu w analysisService
-   * @returns {boolean} - Czy trend pozwala na wejście
-   * @private
-   */
   _isTrendValidForEntry(trend) {
-    // Zgodnie z backtestingową logiką, dozwolone trendy to:
-    // - "up" (wzrostowy)
-    // - "strong_up" (silnie wzrostowy)
-    // - "neutral" (neutralny)
     return ["up", "strong_up", "neutral"].includes(trend);
   }
 
-  /**
-   * Przetwarza sygnał wyjścia
-   * @param {Object} signalData - Dane sygnału wyjścia
-   */
   async processExitSignal(signalData) {
     try {
       const { instanceId, type, price, timestamp, positionId } = signalData;
 
-      // Pobierz bieżący stan pozycji dla instancji
       const currentPosition = this.activePositions.get(instanceId);
 
-      // Sprawdź, czy mamy aktywną pozycję
       if (!currentPosition || currentPosition.status !== "active") {
         logger.debug(
           `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - brak aktywnej pozycji`
@@ -602,24 +479,18 @@ class SignalService extends EventEmitter {
         return;
       }
 
-      // Sprawdź minimalny czas trwania pierwszego wejścia (tylko jeśli mamy jedno wejście)
       const entryCount = currentPosition.entries.length;
       if (entryCount === 1) {
-        // Pobierz instancję, aby uzyskać dostęp do konfiguracji
         const instanceForTimeCheck = await Instance.findOne({ instanceId });
         if (!instanceForTimeCheck) {
           logger.error(`Nie znaleziono instancji ${instanceId} w bazie danych`);
-          // Kontynuuj bez sprawdzania czasu, żeby nie blokować całkowicie
         } else {
-          // Pobierz minimalny czas trwania pierwszego wejścia (domyślnie 1 godzina)
           const minFirstEntryDuration =
             instanceForTimeCheck.strategy.parameters.signals
               ?.minFirstEntryDuration || 60 * 60 * 1000;
 
-          // Oblicz czas trwania pozycji
           const positionDuration = timestamp - currentPosition.entryTime;
 
-          // Jeśli czas trwania jest zbyt krótki, ignoruj sygnał wyjścia
           if (positionDuration < minFirstEntryDuration) {
             logger.info(
               `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - pierwsze wejście zbyt świeże (${(positionDuration / 60000).toFixed(1)} min < ${minFirstEntryDuration / 60000} min)`
@@ -629,35 +500,27 @@ class SignalService extends EventEmitter {
         }
       }
 
-      // Sprawdź, czy pozycja ma prawidłowe positionId
-      if (positionId && currentPosition.positionId !== positionId) {
-        logger.warn(
-          `ID pozycji się nie zgadza: oczekiwane ${positionId}, aktualne ${currentPosition.positionId}`
-        );
-        // Aktualizuj ID pozycji w pamięci, jeśli nie jest zgodne
-        currentPosition.positionId = positionId;
-      }
+      logger.info(`🔹 SYGNAŁ WYJŚCIA dla instancji ${instanceId}`);
+      logger.info(
+        `📊 Pozycja ma ${currentPosition.entries.length} wejść w pamięci`
+      );
 
-      // Oblicz wynik dla pozycji
       const entryAvgPrice = this.calculateAverageEntryPrice(currentPosition);
       const profitPercent = (price / entryAvgPrice - 1) * 100;
 
-      // Oblicz łączną kwotę wejściową
       let totalEntryAmount = 0;
       for (const entry of currentPosition.entries) {
         totalEntryAmount += entry.amount;
       }
 
-      // Oblicz wartość końcową
       const exitAmount = totalEntryAmount * (1 + profitPercent / 100);
       const profit = exitAmount - totalEntryAmount;
 
-      // Utwórz sygnał wyjścia w bazie danych
       const exitSignal = await this.createSignalInDatabase({
         instanceId,
         symbol: currentPosition.symbol,
         type: "exit",
-        subType: type, // "upperBandCrossDown" lub "trailingStop"
+        subType: type,
         price,
         profitPercent,
         exitAmount,
@@ -668,7 +531,7 @@ class SignalService extends EventEmitter {
         metadata: {
           entryAvgPrice,
           totalEntryAmount,
-          // Dla trailing stopu dodaj dodatkowe informacje
+          entriesFromMemory: currentPosition.entries.length,
           ...(type === "trailingStop" && signalData.highestPrice
             ? {
                 highestPrice: signalData.highestPrice,
@@ -679,31 +542,18 @@ class SignalService extends EventEmitter {
         },
       });
 
-      // Użyj entrySignalId TYLKO jeśli potrzeba dla zachowania kompatybilności
-      // Preferujemy używanie positionId
       const firstEntrySignalId = currentPosition.entries[0]?.signalId;
 
       try {
-        // Finalizuj pozycję w AccountService
         await accountService.finalizePosition(
           instanceId,
-          firstEntrySignalId, // ID pierwszego sygnału wejścia
-          exitSignal._id, // ID sygnału wyjścia
+          firstEntrySignalId,
+          exitSignal._id,
           totalEntryAmount,
           exitAmount
         );
 
-        // Zamknij prawdziwą pozycję na ByBit
-        // NAPRAWIONE: Pobierz instancję bez .lean() aby mieć pełną konfigurację
         const instanceForExit = await Instance.findOne({ instanceId });
-
-        logger.info(`[EXIT] Pobrano instancję ${instanceId}`);
-        logger.info(
-          `[EXIT] Instance ma bybitConfig: ${!!instanceForExit?.bybitConfig}`
-        );
-        logger.info(
-          `[EXIT] Instance ma apiKey: ${!!instanceForExit?.bybitConfig?.apiKey}`
-        );
 
         if (
           instanceForExit &&
@@ -711,12 +561,10 @@ class SignalService extends EventEmitter {
           instanceForExit.bybitConfig.apiKey
         ) {
           try {
-            // Oblicz łączną wielkość pozycji do zamknięcia
             let totalContractQuantity = 0;
 
-            // Zbierz wszystkie wielkości z wejść pozycji
             logger.info(
-              `[EXIT] Liczba wejść w pozycji: ${currentPosition.entries.length}`
+              `[EXIT] Liczba wejść w pozycji pamięci: ${currentPosition.entries.length}`
             );
 
             for (const entry of currentPosition.entries) {
@@ -729,52 +577,94 @@ class SignalService extends EventEmitter {
             }
 
             logger.info(
-              `[EXIT] Całkowita wielkość kontraktów do zamknięcia: ${totalContractQuantity}`
+              `[EXIT] Całkowita wielkość z pamięci: ${totalContractQuantity}`
             );
 
-            // Jeśli nie mamy zapisanej wielkości, oblicz ją na podstawie aktualnej ceny
             if (totalContractQuantity === 0) {
               logger.warn(
-                `[EXIT] Brak contractQuantity w entries, obliczam na podstawie ceny`
+                `[EXIT] Brak contractQuantity w pamięci, sprawdzam wszystkie sygnały dla instancji`
               );
 
-              const currentPrice = await bybitService.getCurrentPrice(
-                instanceForExit.symbol
-              );
-              const positionValue =
-                totalEntryAmount * instanceForExit.bybitConfig.leverage;
-
-              // Pobierz informacje o instrumencie
-              const instrumentInfo = await bybitService.getCachedInstrumentInfo(
-                instanceForExit.symbol
-              );
-
-              // Oblicz teoretyczną wielkość
-              const theoreticalQuantity = positionValue / currentPrice;
-
-              // Dostosuj wielkość do ograniczeń
-              totalContractQuantity = await this._adjustContractQuantity(
-                theoreticalQuantity,
-                instrumentInfo
-              );
+              const allEntrySignals = await Signal.find({
+                instanceId,
+                type: "entry",
+                status: "executed",
+                timestamp: {
+                  $gte: currentPosition.entryTime - 24 * 60 * 60 * 1000,
+                  $lte: timestamp,
+                },
+              }).sort({ timestamp: 1 });
 
               logger.info(
-                `[EXIT] Obliczona wielkość kontraktu: ${totalContractQuantity}`
+                `[EXIT] Znaleziono ${allEntrySignals.length} wykonanych sygnałów wejścia w bazie`
               );
+
+              for (const signal of allEntrySignals) {
+                const contractQty = signal.metadata?.contractQuantity || 0;
+                logger.info(
+                  `[EXIT] Signal ${signal._id}: contractQuantity=${contractQty}, positionId=${signal.positionId}`
+                );
+                if (contractQty > 0) {
+                  totalContractQuantity += parseFloat(contractQty);
+                }
+              }
+
+              logger.info(
+                `[EXIT] Całkowita wielkość z bazy danych: ${totalContractQuantity}`
+              );
+            }
+
+            if (totalContractQuantity === 0) {
+              logger.warn(
+                `[EXIT] Nadal brak contractQuantity, pobieranie z ByBit API`
+              );
+
+              try {
+                const positionSize = await bybitService.getPositionSize(
+                  instanceForExit.bybitConfig.apiKey,
+                  instanceForExit.bybitConfig.apiSecret,
+                  instanceForExit.symbol,
+                  instanceForExit.bybitConfig.subaccountId
+                );
+                totalContractQuantity = positionSize;
+                logger.info(
+                  `[EXIT] Pobrано z ByBit rzeczywistą wielkość: ${totalContractQuantity}`
+                );
+              } catch (apiError) {
+                logger.error(
+                  `[EXIT] Błąd podczas pobierania wielkości z ByBit: ${apiError.message}`
+                );
+                const currentPrice = await bybitService.getCurrentPrice(
+                  instanceForExit.symbol
+                );
+                const positionValue =
+                  totalEntryAmount * instanceForExit.bybitConfig.leverage;
+                const instrumentInfo =
+                  await bybitService.getCachedInstrumentInfo(
+                    instanceForExit.symbol
+                  );
+                const theoreticalQuantity = positionValue / currentPrice;
+                totalContractQuantity = await this._adjustContractQuantity(
+                  theoreticalQuantity,
+                  instrumentInfo
+                );
+                logger.info(
+                  `[EXIT] Obliczona wielkość kontraktu: ${totalContractQuantity}`
+                );
+              }
             }
 
             logger.info(
               `[EXIT] Próba zamknięcia pozycji na ByBit: symbol=${instanceForExit.symbol}, quantity=${totalContractQuantity}`
             );
 
-            // Zamknij pozycję
             const orderResult = await bybitService.closePosition(
               instanceForExit.bybitConfig.apiKey,
               instanceForExit.bybitConfig.apiSecret,
               instanceForExit.symbol,
-              "Buy", // Dla pozycji long side="Buy"
+              "Buy",
               totalContractQuantity.toString(),
-              0, // 0 = One-Way Mode (zawsze używamy tej wartości)
+              0,
               instanceForExit.bybitConfig.subaccountId
             );
 
@@ -782,7 +672,6 @@ class SignalService extends EventEmitter {
               `[EXIT] ByBit close order placed: ${JSON.stringify(orderResult)}`
             );
 
-            // Zapisz ID zlecenia zamykającego
             exitSignal.metadata.bybitOrderId = orderResult.result?.orderId;
             exitSignal.metadata.bybitOrderLinkId =
               orderResult.result?.orderLinkId;
@@ -800,7 +689,6 @@ class SignalService extends EventEmitter {
           );
         }
 
-        // Zaktualizuj pozycję w pamięci
         currentPosition.exitTime = timestamp;
         currentPosition.exitPrice = price;
         currentPosition.exitType = type;
@@ -810,27 +698,22 @@ class SignalService extends EventEmitter {
         currentPosition.status = "closed";
         currentPosition.exitSignalId = exitSignal._id;
 
-        // Dodaj do historii
         if (!this.positionHistory.has(instanceId)) {
           this.positionHistory.set(instanceId, []);
         }
 
         this.positionHistory.get(instanceId).push({ ...currentPosition });
 
-        // Usuń z aktywnych pozycji
         this.activePositions.delete(instanceId);
 
-        // Resetuj czas ostatniego wejścia
         this.lastEntryTimes.delete(instanceId);
 
-        // Emituj zdarzenie
         this.emit("positionClosed", currentPosition);
 
         logger.info(
           `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)}, typ: ${type})`
         );
 
-        // Synchronizuj saldo po zamknięciu pozycji
         const instanceForSync = await Instance.findOne({ instanceId });
         if (
           instanceForSync &&
@@ -842,7 +725,6 @@ class SignalService extends EventEmitter {
             `Synchronizacja salda po zamknięciu pozycji dla instancji ${instanceId}...`
           );
 
-          // Poczekaj chwilę aby ByBit zaktualizował saldo
           setTimeout(async () => {
             try {
               await instanceService.syncInstanceBalance(instanceId);
@@ -851,14 +733,13 @@ class SignalService extends EventEmitter {
                 `Błąd podczas synchronizacji salda po zamknięciu pozycji: ${error.message}`
               );
             }
-          }, 2000); // 2 sekundy opóźnienia
+          }, 2000);
         }
 
         return exitSignal;
       } catch (error) {
         logger.error(`Nie udało się sfinalizować pozycji: ${error.message}`);
 
-        // Oznacz sygnał wyjścia jako anulowany
         await Signal.findByIdAndUpdate(exitSignal._id, {
           status: "canceled",
           metadata: {
@@ -876,11 +757,6 @@ class SignalService extends EventEmitter {
     }
   }
 
-  /**
-   * Oblicza średnią cenę wejścia dla pozycji
-   * @param {Object} position - Obiekt pozycji
-   * @returns {number} - Średnia ważona cena wejścia
-   */
   calculateAverageEntryPrice(position) {
     let totalAllocation = 0;
     let weightedSum = 0;
@@ -893,11 +769,6 @@ class SignalService extends EventEmitter {
     return totalAllocation > 0 ? weightedSum / totalAllocation : 0;
   }
 
-  /**
-   * Tworzy sygnał w bazie danych
-   * @param {Object} signalData - Dane sygnału
-   * @returns {Promise<Object>} - Utworzony sygnał
-   */
   async createSignalInDatabase(signalData) {
     try {
       const signal = new Signal({
@@ -915,7 +786,7 @@ class SignalService extends EventEmitter {
         status: signalData.status || "pending",
         metadata: signalData.metadata || {},
         entrySignalId: signalData.entrySignalId,
-        positionId: signalData.positionId, // Nowe pole
+        positionId: signalData.positionId,
       });
 
       await signal.save();
@@ -928,11 +799,6 @@ class SignalService extends EventEmitter {
     }
   }
 
-  /**
-   * Pobiera aktywne pozycje dla instancji
-   * @param {string} instanceId - Identyfikator instancji (opcjonalnie)
-   * @returns {Array|Object} - Tablica aktywnych pozycji lub pojedyncza pozycja
-   */
   getActivePositions(instanceId = null) {
     if (instanceId) {
       return this.activePositions.get(instanceId) || null;
@@ -941,52 +807,31 @@ class SignalService extends EventEmitter {
     return Array.from(this.activePositions.values());
   }
 
-  /**
-   * Pobiera historię pozycji dla instancji
-   * @param {string} instanceId - Identyfikator instancji (opcjonalnie)
-   * @returns {Array} - Tablica historii pozycji
-   */
   getPositionHistory(instanceId = null) {
     if (instanceId) {
       return this.positionHistory.get(instanceId) || [];
     }
 
-    // Zwróć wszystkie historie pozycji
     const allHistory = [];
     for (const history of this.positionHistory.values()) {
       allHistory.push(...history);
     }
 
-    // Sortuj według czasu zamknięcia (od najnowszych)
     return allHistory.sort((a, b) => b.exitTime - a.exitTime);
   }
 
-  /**
-   * Ustawia aktywną pozycję dla instancji (używane przy odtwarzaniu stanu)
-   * @param {string} instanceId - Identyfikator instancji
-   * @param {Object} position - Obiekt pozycji
-   */
   setActivePosition(instanceId, position) {
-    // Upewniamy się, że pozycja ma positionId
     if (!position.positionId) {
       position.positionId = `position-${instanceId}-${Date.now()}`;
     }
 
     this.activePositions.set(instanceId, position);
 
-    // Jeśli pozycja ma pierwsze wejście, ustaw ostatni czas wejścia
     if (position.entries && position.entries.length > 0) {
       this.lastEntryTimes.set(instanceId, position.entries[0].time);
     }
   }
 
-  /**
-   * Pobiera sygnały z bazy danych
-   * @param {Object} filters - Filtry do zapytania
-   * @param {number} limit - Limit wyników
-   * @param {number} skip - Liczba pominiętych wyników
-   * @returns {Promise<Array>} - Tablica sygnałów
-   */
   async getSignalsFromDb(filters = {}, limit = 100, skip = 0) {
     try {
       return await Signal.find(filters)
@@ -1001,23 +846,16 @@ class SignalService extends EventEmitter {
     }
   }
 
-  /**
-   * Pobiera statystyki sygnałów
-   * @param {string} instanceId - Identyfikator instancji (opcjonalnie)
-   * @returns {Promise<Object>} - Statystyki sygnałów
-   */
   async getSignalStats(instanceId = null) {
     try {
       const filters = instanceId ? { instanceId } : {};
 
-      // Pobierz wszystkie sygnały wyjścia
       const exitSignals = await Signal.find({
         ...filters,
         type: "exit",
         status: "executed",
       });
 
-      // Oblicz statystyki
       let totalTrades = exitSignals.length;
       let profitableTrades = 0;
       let totalProfit = 0;
@@ -1048,7 +886,6 @@ class SignalService extends EventEmitter {
         }
       }
 
-      // Statystyki odrzuconych sygnałów (jeśli je zapisujemy)
       const rejectedSignals = await Signal.find({
         ...filters,
         type: "entry-rejected",
@@ -1074,17 +911,10 @@ class SignalService extends EventEmitter {
     }
   }
 
-  /**
-   * Czyści historię sygnałów dla instancji
-   * @param {string} instanceId - Identyfikator instancji
-   * @returns {Promise<number>} - Liczba usuniętych sygnałów
-   */
   async clearSignalHistory(instanceId) {
     try {
-      // Usuń sygnały z bazy danych
       const result = await Signal.deleteMany({ instanceId });
 
-      // Usuń z lokalnych map
       this.positionHistory.delete(instanceId);
       this.lastEntryTimes.delete(instanceId);
 
@@ -1099,6 +929,5 @@ class SignalService extends EventEmitter {
   }
 }
 
-// Eksportuj singleton
 const signalService = new SignalService();
 module.exports = signalService;
