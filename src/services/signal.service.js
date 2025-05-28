@@ -2,6 +2,7 @@ const bybitService = require("./bybit.service");
 const analysisService = require("./analysis.service");
 const accountService = require("./account.service");
 const logger = require("../utils/logger");
+const TradingLogger = require("../utils/trading-logger");
 const { EventEmitter } = require("events");
 const Signal = require("../models/signal.model");
 const Instance = require("../models/instance.model");
@@ -13,6 +14,7 @@ class SignalService extends EventEmitter {
     this.activePositions = new Map();
     this.positionHistory = new Map();
     this.lastEntryTimes = new Map();
+    this.lastRejectionLogs = new Map(); // Śledzenie ostatnich logów odrzuceń
     this.setupListeners();
   }
 
@@ -35,9 +37,6 @@ class SignalService extends EventEmitter {
     }
 
     if (theoreticalQuantity < instrumentInfo.minOrderQty) {
-      logger.debug(
-        `Wielkość kontraktu ${theoreticalQuantity} poniżej minimum ${instrumentInfo.minOrderQty}, używam wartości minimalnej`
-      );
       return instrumentInfo.minOrderQty;
     }
 
@@ -45,9 +44,6 @@ class SignalService extends EventEmitter {
     const adjustedQuantity = steps * instrumentInfo.qtyStep;
 
     if (adjustedQuantity < instrumentInfo.minOrderQty) {
-      logger.debug(
-        `Zaokrąglona wielkość ${adjustedQuantity} poniżej minimum, używam wartości minimalnej`
-      );
       return instrumentInfo.minOrderQty;
     }
 
@@ -65,7 +61,6 @@ class SignalService extends EventEmitter {
   ) {
     const positionValue = adjustedQuantity * price;
     const marginUsed = positionValue / leverage;
-
     return (marginUsed / availableBalance) * 100;
   }
 
@@ -110,48 +105,34 @@ class SignalService extends EventEmitter {
   async processEntrySignal(signalData) {
     try {
       const { instanceId, type, price, timestamp, trend } = signalData;
-
-      // ✅ DODAJ DEBUG LOG NA POCZĄTKU
-      logger.info(`🚀 processEntrySignal START dla instanceId: ${instanceId}
-      - type: ${type}
-      - timestamp: ${timestamp}
-      - price: ${price}`);
-
       let currentPosition = this.activePositions.get(instanceId);
 
-      // ✅ DODAJ DEBUG LOG DLA CURRENT POSITION
-      logger.info(`📍 Current position dla ${instanceId}: ${currentPosition ? "ISTNIEJE" : "BRAK"}
-      ${
-        currentPosition
-          ? `- positionId: ${currentPosition.positionId}
-      - entries count: ${currentPosition.entries?.length || 0}
-      - status: ${currentPosition.status}`
-          : ""
-      }`);
-
       const instance = await Instance.findOne({ instanceId });
-
       if (!instance) {
-        logger.error(`Nie znaleziono instancji ${instanceId}`);
-        return;
+        return; // Cicho ignoruj nieistniejące instancje
       }
 
       if (!instance.financials || instance.financials.availableBalance <= 0) {
-        logger.warn(
-          `Instancja ${instanceId} nie ma dostępnych środków - pominięto sygnał wejścia`
+        const rejectionKey = `${instanceId}-no-funds`;
+        this.lastRejectionLogs.set(
+          rejectionKey,
+          TradingLogger.logSignalRejected(
+            instanceId,
+            instance.symbol,
+            "No available funds",
+            this.lastRejectionLogs.get(rejectionKey)
+          )
         );
         return;
       }
 
       const strategyParams = instance.strategy.parameters;
-
       const firstEntryPercent =
         strategyParams.capitalAllocation?.firstEntry * 100 || 10;
       const secondEntryPercent =
         strategyParams.capitalAllocation?.secondEntry * 100 || 25;
       const thirdEntryPercent =
         strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
-
       const minEntryTimeGap =
         strategyParams.signals?.minEntryTimeGap || 7200000;
 
@@ -159,15 +140,21 @@ class SignalService extends EventEmitter {
       const instrumentInfo = await bybitService.getCachedInstrumentInfo(
         instance.symbol
       );
-
       const leverage = instance.bybitConfig?.leverage || 3;
 
       if (!currentPosition) {
         const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
 
         if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-          logger.info(
-            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
+          const rejectionKey = `${instanceId}-bad-trend`;
+          this.lastRejectionLogs.set(
+            rejectionKey,
+            TradingLogger.logSignalRejected(
+              instanceId,
+              instance.symbol,
+              `Bad trend: ${trend}`,
+              this.lastRejectionLogs.get(rejectionKey)
+            )
           );
 
           await this.createSignalInDatabase({
@@ -180,13 +167,10 @@ class SignalService extends EventEmitter {
             status: "canceled",
             metadata: { trend },
           });
-
           return;
         }
 
-        // ✅ NAPRAWKA: Generuj positionId dla pierwszego wejścia
         const positionId = `position-${instanceId}-${Date.now()}`;
-
         const optimalEntry = await this._calculateOptimalContractQuantity(
           firstEntryPercent,
           instance.financials.availableBalance,
@@ -194,15 +178,6 @@ class SignalService extends EventEmitter {
           leverage,
           instrumentInfo
         );
-
-        logger.info(`
-        Pierwsze wejście dla ${instanceId}:
-        - Planowana alokacja: ${firstEntryPercent}%
-        - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
-        - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
-        - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
-        - POSITION ID: ${positionId}
-      `);
 
         const signal = await this.createSignalInDatabase({
           instanceId,
@@ -214,6 +189,7 @@ class SignalService extends EventEmitter {
           amount: optimalEntry.actualMargin,
           timestamp,
           status: "pending",
+          positionId: positionId,
           metadata: {
             trend,
             positionId,
@@ -221,7 +197,6 @@ class SignalService extends EventEmitter {
             theoreticalQuantity: optimalEntry.theoreticalQuantity,
             adjustedQuantity: optimalEntry.adjustedQuantity,
           },
-          positionId: positionId,
         });
 
         try {
@@ -239,7 +214,6 @@ class SignalService extends EventEmitter {
                 instance.symbol,
                 leverage
               );
-
               await bybitService.setMarginMode(
                 instance.bybitConfig.apiKey,
                 instance.bybitConfig.apiSecret,
@@ -257,7 +231,12 @@ class SignalService extends EventEmitter {
                 instance.bybitConfig.subaccountId
               );
 
-              logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
+              TradingLogger.logBybitSuccess(
+                instanceId,
+                instance.symbol,
+                "Order placed",
+                `ID: ${orderResult.result?.orderId}`
+              );
 
               signal.metadata.bybitOrderId = orderResult.result?.orderId;
               signal.metadata.bybitOrderLinkId =
@@ -265,14 +244,19 @@ class SignalService extends EventEmitter {
               signal.metadata.contractQuantity = optimalEntry.adjustedQuantity;
               await signal.save();
             } catch (error) {
-              logger.error(`Error placing ByBit order: ${error.message}`);
+              TradingLogger.logBybitError(
+                instanceId,
+                instance.symbol,
+                "Order placement",
+                error.message
+              );
             }
           }
 
           const newPosition = {
             instanceId,
             symbol: instance.symbol,
-            positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
+            positionId: positionId,
             entryTime: timestamp,
             entryPrice: price,
             capitalAllocation: optimalEntry.actualAllocationPercent / 100,
@@ -288,7 +272,7 @@ class SignalService extends EventEmitter {
                 amount: optimalEntry.actualMargin,
                 signalId: signal._id.toString(),
                 contractQuantity: optimalEntry.adjustedQuantity,
-                positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
+                positionId: positionId,
               },
             ],
             history: [],
@@ -298,16 +282,26 @@ class SignalService extends EventEmitter {
           this.lastEntryTimes.set(instanceId, timestamp);
           analysisService.resetTrailingStopTracking(instanceId);
 
+          // GŁÓWNY LOG WEJŚCIA
+          TradingLogger.logEntry(
+            instanceId,
+            instance.symbol,
+            price,
+            "First entry",
+            trend,
+            optimalEntry.actualAllocationPercent / 100,
+            optimalEntry.actualMargin,
+            optimalEntry.adjustedQuantity
+          );
+
           this.emit("newPosition", newPosition);
-
-          logger.info(
-            `Utworzono nową pozycję dla instancji ${instanceId} przy cenie ${price}, alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC, POSITION ID: ${positionId}`
-          );
         } catch (error) {
-          logger.error(
-            `Nie udało się zablokować środków dla pozycji: ${error.message}`
+          TradingLogger.logTradingError(
+            instanceId,
+            instance.symbol,
+            error.message,
+            "Lock funds failed"
           );
-
           await Signal.findByIdAndUpdate(signal._id, {
             status: "canceled",
             metadata: {
@@ -319,26 +313,45 @@ class SignalService extends EventEmitter {
         const entryCount = currentPosition.entries.length;
 
         if (entryCount >= 3) {
-          logger.info(
-            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - osiągnięto limit 3 wejść`
+          const rejectionKey = `${instanceId}-max-entries`;
+          this.lastRejectionLogs.set(
+            rejectionKey,
+            TradingLogger.logSignalRejected(
+              instanceId,
+              instance.symbol,
+              "Max 3 entries reached",
+              this.lastRejectionLogs.get(rejectionKey)
+            )
           );
           return;
         }
 
         const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
-
         if (timestamp - lastEntryTime < minEntryTimeGap) {
-          logger.info(
-            `Ignorowanie sygnału wejścia dla instancji ${instanceId} - za mały odstęp czasowy (${((timestamp - lastEntryTime) / 60000).toFixed(1)} min < ${minEntryTimeGap / 60000} min)`
+          const rejectionKey = `${instanceId}-time-gap`;
+          this.lastRejectionLogs.set(
+            rejectionKey,
+            TradingLogger.logSignalRejected(
+              instanceId,
+              instance.symbol,
+              `Too soon: ${((timestamp - lastEntryTime) / 60000).toFixed(1)}min < ${minEntryTimeGap / 60000}min`,
+              this.lastRejectionLogs.get(rejectionKey)
+            )
           );
           return;
         }
 
         const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
-
         if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-          logger.info(
-            `Ignorowanie sygnału kolejnego wejścia dla instancji ${instanceId} - niewłaściwy trend (${trend})`
+          const rejectionKey = `${instanceId}-trend-${entryCount + 1}`;
+          this.lastRejectionLogs.set(
+            rejectionKey,
+            TradingLogger.logSignalRejected(
+              instanceId,
+              instance.symbol,
+              `Bad trend for entry ${entryCount + 1}: ${trend}`,
+              this.lastRejectionLogs.get(rejectionKey)
+            )
           );
 
           await this.createSignalInDatabase({
@@ -351,12 +364,10 @@ class SignalService extends EventEmitter {
             status: "canceled",
             metadata: { trend },
           });
-
           return;
         }
 
         const remainingBalance = instance.financials.availableBalance;
-
         let allocationPercent = 0;
         let entryType = "";
 
@@ -376,32 +387,7 @@ class SignalService extends EventEmitter {
           instrumentInfo
         );
 
-        // ✅ NAPRAWKA: Używaj positionId z aktywnej pozycji
         const positionId = currentPosition.positionId;
-
-        // ✅ DODAJ DEBUG
-        logger.info(`🔑 POSITION ID DEBUG dla ${entryType}:
-  - currentPosition.positionId: ${currentPosition.positionId}
-  - positionId używany: ${positionId}
-  - currentPosition: ${JSON.stringify(currentPosition, null, 2)}`);
-
-        if (!positionId) {
-          logger.error(`❌ BŁĄD: currentPosition.positionId jest undefined!`);
-          // Fallback - użyj generowania
-          const fallbackPositionId = `position-${instanceId}-${Date.now()}`;
-          logger.error(`Używam fallback positionId: ${fallbackPositionId}`);
-          positionId = fallbackPositionId;
-        }
-
-        logger.info(`
-        ${entryType.toUpperCase()} wejście dla ${instanceId}:
-        - Pozostały bilans: ${remainingBalance}
-        - Planowana alokacja: ${allocationPercent}% z pozostałego kapitału
-        - Rzeczywista alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%
-        - Teoretyczna ilość BTC: ${optimalEntry.theoreticalQuantity}
-        - Dostosowana ilość BTC: ${optimalEntry.adjustedQuantity}
-        - POSITION ID: ${positionId} (używam istniejący)
-      `);
 
         const signal = await this.createSignalInDatabase({
           instanceId,
@@ -413,13 +399,13 @@ class SignalService extends EventEmitter {
           amount: optimalEntry.actualMargin,
           timestamp,
           status: "pending",
+          positionId: positionId,
           metadata: {
             trend,
             theoreticalAllocation: allocationPercent / 100,
             theoreticalQuantity: optimalEntry.theoreticalQuantity,
             adjustedQuantity: optimalEntry.adjustedQuantity,
           },
-          positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID CO PIERWSZE WEJŚCIE
         });
 
         try {
@@ -441,7 +427,12 @@ class SignalService extends EventEmitter {
                 instance.bybitConfig.subaccountId
               );
 
-              logger.info(`ByBit order placed: ${JSON.stringify(orderResult)}`);
+              TradingLogger.logBybitSuccess(
+                instanceId,
+                instance.symbol,
+                `${entryType} order placed`,
+                `ID: ${orderResult.result?.orderId}`
+              );
 
               signal.metadata.bybitOrderId = orderResult.result?.orderId;
               signal.metadata.bybitOrderLinkId =
@@ -449,7 +440,12 @@ class SignalService extends EventEmitter {
               signal.metadata.contractQuantity = optimalEntry.adjustedQuantity;
               await signal.save();
             } catch (error) {
-              logger.error(`Error placing ByBit order: ${error.message}`);
+              TradingLogger.logBybitError(
+                instanceId,
+                instance.symbol,
+                `${entryType} order placement`,
+                error.message
+              );
             }
           }
 
@@ -462,25 +458,34 @@ class SignalService extends EventEmitter {
             amount: optimalEntry.actualMargin,
             signalId: signal._id.toString(),
             contractQuantity: optimalEntry.adjustedQuantity,
-            positionId: positionId, // ✅ UŻYJ TEGO SAMEGO ID
+            positionId: positionId,
           });
 
           currentPosition.capitalAllocation +=
             optimalEntry.actualAllocationPercent / 100;
           currentPosition.capitalAmount += optimalEntry.actualMargin;
-
           this.lastEntryTimes.set(instanceId, timestamp);
 
+          // GŁÓWNY LOG WEJŚCIA
+          TradingLogger.logEntry(
+            instanceId,
+            instance.symbol,
+            price,
+            `${entryType} entry`,
+            trend,
+            optimalEntry.actualAllocationPercent / 100,
+            optimalEntry.actualMargin,
+            optimalEntry.adjustedQuantity
+          );
+
           this.emit("positionUpdated", currentPosition);
-
-          logger.info(
-            `Dodano ${entryType} wejście do pozycji dla instancji ${instanceId} przy cenie ${price} (alokacja: ${optimalEntry.actualAllocationPercent.toFixed(2)}%, kwota: ${optimalEntry.actualMargin}, wielkość kontraktu: ${optimalEntry.adjustedQuantity} BTC, POSITION ID: ${positionId})`
-          );
         } catch (error) {
-          logger.error(
-            `Nie udało się zablokować środków dla dodatkowego wejścia: ${error.message}`
+          TradingLogger.logTradingError(
+            instanceId,
+            instance.symbol,
+            error.message,
+            `${entryType} entry lock funds failed`
           );
-
           await Signal.findByIdAndUpdate(signal._id, {
             status: "canceled",
             metadata: {
@@ -503,41 +508,37 @@ class SignalService extends EventEmitter {
   async processExitSignal(signalData) {
     try {
       const { instanceId, type, price, timestamp, positionId } = signalData;
-
       const currentPosition = this.activePositions.get(instanceId);
 
       if (!currentPosition || currentPosition.status !== "active") {
-        logger.debug(
-          `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - brak aktywnej pozycji`
-        );
-        return;
+        return; // Cicho ignoruj jeśli brak pozycji
       }
 
       const entryCount = currentPosition.entries.length;
       if (entryCount === 1) {
         const instanceForTimeCheck = await Instance.findOne({ instanceId });
-        if (!instanceForTimeCheck) {
-          logger.error(`Nie znaleziono instancji ${instanceId} w bazie danych`);
-        } else {
+        if (instanceForTimeCheck) {
           const minFirstEntryDuration =
             instanceForTimeCheck.strategy.parameters.signals
               ?.minFirstEntryDuration || 60 * 60 * 1000;
-
           const positionDuration = timestamp - currentPosition.entryTime;
 
           if (positionDuration < minFirstEntryDuration) {
-            logger.info(
-              `Ignorowanie sygnału wyjścia dla instancji ${instanceId} - pierwsze wejście zbyt świeże (${(positionDuration / 60000).toFixed(1)} min < ${minFirstEntryDuration / 60000} min)`
+            // Loguj tylko raz na 5 minut
+            const rejectionKey = `${instanceId}-too-fresh`;
+            this.lastRejectionLogs.set(
+              rejectionKey,
+              TradingLogger.logSignalRejected(
+                instanceId,
+                currentPosition.symbol,
+                `First entry too fresh: ${(positionDuration / 60000).toFixed(1)}min < ${minFirstEntryDuration / 60000}min`,
+                this.lastRejectionLogs.get(rejectionKey)
+              )
             );
             return;
           }
         }
       }
-
-      logger.info(`🔹 SYGNAŁ WYJŚCIA dla instancji ${instanceId}`);
-      logger.info(
-        `📊 Pozycja ma ${currentPosition.entries.length} wejść w pamięci`
-      );
 
       const entryAvgPrice = this.calculateAverageEntryPrice(currentPosition);
       const profitPercent = (price / entryAvgPrice - 1) * 100;
@@ -586,7 +587,6 @@ class SignalService extends EventEmitter {
           totalEntryAmount,
           exitAmount
         );
-
         const instanceForExit = await Instance.findOne({ instanceId });
 
         if (
@@ -597,28 +597,13 @@ class SignalService extends EventEmitter {
           try {
             let totalContractQuantity = 0;
 
-            logger.info(
-              `[EXIT] Liczba wejść w pozycji pamięci: ${currentPosition.entries.length}`
-            );
-
             for (const entry of currentPosition.entries) {
-              logger.info(
-                `[EXIT] Entry contractQuantity: ${entry.contractQuantity}`
-              );
               if (entry.contractQuantity) {
                 totalContractQuantity += parseFloat(entry.contractQuantity);
               }
             }
 
-            logger.info(
-              `[EXIT] Całkowita wielkość z pamięci: ${totalContractQuantity}`
-            );
-
             if (totalContractQuantity === 0) {
-              logger.warn(
-                `[EXIT] Brak contractQuantity w pamięci, sprawdzam wszystkie sygnały dla instancji`
-              );
-
               const allEntrySignals = await Signal.find({
                 instanceId,
                 type: "entry",
@@ -629,30 +614,15 @@ class SignalService extends EventEmitter {
                 },
               }).sort({ timestamp: 1 });
 
-              logger.info(
-                `[EXIT] Znaleziono ${allEntrySignals.length} wykonanych sygnałów wejścia w bazie`
-              );
-
               for (const signal of allEntrySignals) {
                 const contractQty = signal.metadata?.contractQuantity || 0;
-                logger.info(
-                  `[EXIT] Signal ${signal._id}: contractQuantity=${contractQty}, positionId=${signal.positionId}`
-                );
                 if (contractQty > 0) {
                   totalContractQuantity += parseFloat(contractQty);
                 }
               }
-
-              logger.info(
-                `[EXIT] Całkowita wielkość z bazy danych: ${totalContractQuantity}`
-              );
             }
 
             if (totalContractQuantity === 0) {
-              logger.warn(
-                `[EXIT] Nadal brak contractQuantity, pobieranie z ByBit API`
-              );
-
               try {
                 const positionSize = await bybitService.getPositionSize(
                   instanceForExit.bybitConfig.apiKey,
@@ -661,13 +631,7 @@ class SignalService extends EventEmitter {
                   instanceForExit.bybitConfig.subaccountId
                 );
                 totalContractQuantity = positionSize;
-                logger.info(
-                  `[EXIT] Pobrано z ByBit rzeczywistą wielkość: ${totalContractQuantity}`
-                );
               } catch (apiError) {
-                logger.error(
-                  `[EXIT] Błąd podczas pobierania wielkości z ByBit: ${apiError.message}`
-                );
                 const currentPrice = await bybitService.getCurrentPrice(
                   instanceForExit.symbol
                 );
@@ -682,15 +646,8 @@ class SignalService extends EventEmitter {
                   theoreticalQuantity,
                   instrumentInfo
                 );
-                logger.info(
-                  `[EXIT] Obliczona wielkość kontraktu: ${totalContractQuantity}`
-                );
               }
             }
-
-            logger.info(
-              `[EXIT] Próba zamknięcia pozycji na ByBit: symbol=${instanceForExit.symbol}, quantity=${totalContractQuantity}`
-            );
 
             const orderResult = await bybitService.closePosition(
               instanceForExit.bybitConfig.apiKey,
@@ -702,8 +659,11 @@ class SignalService extends EventEmitter {
               instanceForExit.bybitConfig.subaccountId
             );
 
-            logger.info(
-              `[EXIT] ByBit close order placed: ${JSON.stringify(orderResult)}`
+            TradingLogger.logBybitSuccess(
+              instanceId,
+              instanceForExit.symbol,
+              "Position closed",
+              `Contract: ${totalContractQuantity}`
             );
 
             exitSignal.metadata.bybitOrderId = orderResult.result?.orderId;
@@ -712,15 +672,13 @@ class SignalService extends EventEmitter {
             exitSignal.metadata.contractQuantity = totalContractQuantity;
             await exitSignal.save();
           } catch (error) {
-            logger.error(
-              `[EXIT] Error closing ByBit position: ${error.message}`
+            TradingLogger.logBybitError(
+              instanceId,
+              instanceForExit.symbol,
+              "Position close",
+              error.message
             );
-            logger.error(`[EXIT] Error stack: ${error.stack}`);
           }
-        } else {
-          logger.warn(
-            `[EXIT] Brak konfiguracji ByBit dla instancji ${instanceId}`
-          );
         }
 
         currentPosition.exitTime = timestamp;
@@ -737,17 +695,24 @@ class SignalService extends EventEmitter {
         }
 
         this.positionHistory.get(instanceId).push({ ...currentPosition });
-
         this.activePositions.delete(instanceId);
-
         this.lastEntryTimes.delete(instanceId);
+
+        // GŁÓWNY LOG WYJŚCIA
+        const duration = timestamp - currentPosition.entryTime;
+        TradingLogger.logExit(
+          instanceId,
+          currentPosition.symbol,
+          price,
+          type,
+          profitPercent,
+          profit,
+          duration
+        );
 
         this.emit("positionClosed", currentPosition);
 
-        logger.info(
-          `Zamknięto pozycję dla instancji ${instanceId} przy cenie ${price} (zysk: ${profitPercent.toFixed(2)}%, kwota: ${profit.toFixed(2)}, typ: ${type})`
-        );
-
+        // Synchronizacja salda po zamknięciu pozycji
         const instanceForSync = await Instance.findOne({ instanceId });
         if (
           instanceForSync &&
@@ -755,16 +720,15 @@ class SignalService extends EventEmitter {
           instanceForSync.bybitConfig.apiKey &&
           !instanceForSync.testMode
         ) {
-          logger.info(
-            `Synchronizacja salda po zamknięciu pozycji dla instancji ${instanceId}...`
-          );
-
           setTimeout(async () => {
             try {
               await instanceService.syncInstanceBalance(instanceId);
             } catch (error) {
-              logger.error(
-                `Błąd podczas synchronizacji salda po zamknięciu pozycji: ${error.message}`
+              TradingLogger.logTradingError(
+                instanceId,
+                currentPosition.symbol,
+                error.message,
+                "Balance sync after exit failed"
               );
             }
           }, 2000);
@@ -772,15 +736,18 @@ class SignalService extends EventEmitter {
 
         return exitSignal;
       } catch (error) {
-        logger.error(`Nie udało się sfinalizować pozycji: ${error.message}`);
-
+        TradingLogger.logTradingError(
+          instanceId,
+          currentPosition.symbol,
+          error.message,
+          "Position finalize failed"
+        );
         await Signal.findByIdAndUpdate(exitSignal._id, {
           status: "canceled",
           metadata: {
             cancelReason: `Nie udało się sfinalizować pozycji: ${error.message}`,
           },
         });
-
         throw error;
       }
     } catch (error) {
@@ -837,7 +804,6 @@ class SignalService extends EventEmitter {
     if (instanceId) {
       return this.activePositions.get(instanceId) || null;
     }
-
     return Array.from(this.activePositions.values());
   }
 
@@ -948,9 +914,9 @@ class SignalService extends EventEmitter {
   async clearSignalHistory(instanceId) {
     try {
       const result = await Signal.deleteMany({ instanceId });
-
       this.positionHistory.delete(instanceId);
       this.lastEntryTimes.delete(instanceId);
+      this.lastRejectionLogs.delete(instanceId);
 
       logger.info(`Wyczyszczono historię sygnałów dla instancji ${instanceId}`);
       return result.deletedCount;

@@ -14,6 +14,7 @@ const {
 } = require("../utils/technical");
 const binanceService = require("./binance.service");
 const logger = require("../utils/logger");
+const TradingLogger = require("../utils/trading-logger");
 const { EventEmitter } = require("events");
 
 class AnalysisService extends EventEmitter {
@@ -25,12 +26,14 @@ class AnalysisService extends EventEmitter {
     this.highestPrices = new Map(); // Mapa najwyższych cen dla trailing stopu
     this.extremumReached = new Map(); // Flaga czy osiągnięto ekstremum dla instancji
     this.trailingStopActivationTime = new Map(); // Czas aktywacji trailing stopu
+
+    // ✅ THROTTLING - zapobiega duplikowanym sygnałom
+    this.lastSignalEmission = new Map(); // Śledzenie ostatniego czasu emisji sygnału
+    this.signalThrottleTime = 30000; // 30 sekund throttling dla tego samego typu sygnału
+
     this.setupListeners();
   }
 
-  /**
-   * Konfiguruje nasłuchiwanie zdarzeń z serwisu Binance
-   */
   /**
    * Konfiguruje nasłuchiwanie zdarzeń z serwisu Binance
    */
@@ -118,8 +121,10 @@ class AnalysisService extends EventEmitter {
 
     // Dodaj obsługę zdarzeń emitowanych bezpośrednio do analysisService (dla symulatora)
     this.on("kline", (data) => {
-      logger.info(
-        `[SIMULATOR] Otrzymano zdarzenie kline bezpośrednio dla instanceId: ${data.instanceId}`
+      TradingLogger.logDebugThrottled(
+        `simulator-${data.instanceId}`,
+        `[SIMULATOR] Otrzymano zdarzenie kline bezpośrednio dla instanceId: ${data.instanceId}`,
+        60000
       );
 
       const { candle, instanceId } = data;
@@ -129,17 +134,11 @@ class AnalysisService extends EventEmitter {
 
       // Sprawdź, czy to aktywna instancja
       if (!this.instances.has(instanceId)) {
-        logger.info(
-          `[SIMULATOR] Instancja ${instanceId} nie jest aktywna, pomijam`
-        );
         return;
       }
 
       // Sprawdź, czy mamy poprzednią cenę
       if (!this.lastPrices.has(instanceId)) {
-        logger.info(
-          `[SIMULATOR] Pierwszy event dla instancji ${instanceId}, zapisuję cenę ${currentPrice}`
-        );
         this.lastPrices.set(instanceId, currentPrice);
         return;
       }
@@ -150,10 +149,6 @@ class AnalysisService extends EventEmitter {
       this.updateHighestPrice(instanceId, currentHigh);
 
       // Wykryj ewentualne sygnały
-      logger.info(
-        `[SIMULATOR] Wykrywanie sygnałów dla ${instanceId}: prev=${previousPrice}, curr=${currentPrice}, high=${currentHigh}, low=${currentLow}`
-      );
-
       this.detectSignals(
         instanceId,
         previousPrice,
@@ -164,12 +159,9 @@ class AnalysisService extends EventEmitter {
 
       // Aktualizuj ostatnią cenę
       this.lastPrices.set(instanceId, currentPrice);
-
-      logger.info(
-        `[SIMULATOR] Zakończono przetwarzanie zdarzenia kline dla ${instanceId}`
-      );
     });
   }
+
   /**
    * Aktualizuje najwyższą cenę dla instancji (używane dla trailing stopu)
    * @param {string} instanceId - Identyfikator instancji
@@ -410,6 +402,7 @@ class AnalysisService extends EventEmitter {
 
   /**
    * Wykrywa sygnały dla instancji na podstawie aktualnych cen i wskaźników
+   * ✅ Z THROTTLING - zapobiega duplikowanym sygnałom
    * @param {string} instanceId - Identyfikator instancji
    * @param {number} previousPrice - Poprzednia cena
    * @param {number} currentPrice - Aktualna cena
@@ -442,14 +435,6 @@ class AnalysisService extends EventEmitter {
       );
 
       // 1. Sprawdź dotknięcie dolnej bandy kanału Hursta (potencjalne wejście)
-      // Implementacja podobna do backtestingu - sprawdzamy przecięcie z góry na dół
-      const lowerBandCross = CrossDetector.detectLevelCross(
-        previousPrice,
-        currentLow,
-        hurstResult.lowerBand
-      );
-
-      // Sprawdź, czy cena przecina dolną bandę (low jest poniżej, ale high jest powyżej)
       let touchesLowerBand = false;
       if (
         currentLow <= hurstResult.lowerBand &&
@@ -459,34 +444,46 @@ class AnalysisService extends EventEmitter {
       }
 
       if (touchesLowerBand) {
-        // Sprawdź warunek trendu z wyższego timeframe'u (EMA), jeśli wymagany
-        let trendConditionMet = true;
-        const config = this.instances.get(instanceId);
+        // ✅ THROTTLING - sprawdź czy nie emitowaliśmy tego sygnału niedawno
+        const signalKey = `${instanceId}-lowerBandTouch`;
+        const lastEmission = this.lastSignalEmission.get(signalKey) || 0;
+        const now = Date.now();
 
-        if (config.checkEMATrend && emaValue !== null) {
-          // Dozwolone trendy: wzrostowy, silnie wzrostowy, neutralny
-          trendConditionMet = ["up", "strong_up", "neutral"].includes(
-            currentTrend
-          );
+        if (now - lastEmission > this.signalThrottleTime) {
+          // Sprawdź warunek trendu z wyższego timeframe'u (EMA), jeśli wymagany
+          let trendConditionMet = true;
+          const config = this.instances.get(instanceId);
+
+          if (config.checkEMATrend && emaValue !== null) {
+            // Dozwolone trendy: wzrostowy, silnie wzrostowy, neutralny
+            trendConditionMet = ["up", "strong_up", "neutral"].includes(
+              currentTrend
+            );
+          }
+
+          if (trendConditionMet) {
+            // Emituj sygnał wejścia i zapisz czas emisji
+            this.emit("entrySignal", {
+              instanceId,
+              type: "lowerBandTouch",
+              price: currentPrice,
+              hurstChannel: hurstResult,
+              emaValue,
+              shortEmaValue,
+              trend: currentTrend,
+              timestamp: now,
+            });
+
+            this.lastSignalEmission.set(signalKey, now);
+
+            TradingLogger.logDebugThrottled(
+              `signal-${instanceId}-entry`,
+              `Emitowano sygnał lowerBandTouch dla ${instanceId} @${currentPrice}`,
+              60000
+            );
+          }
         }
-
-        if (trendConditionMet) {
-          // Emituj sygnał wejścia
-          this.emit("entrySignal", {
-            instanceId,
-            type: "lowerBandTouch",
-            price: currentPrice,
-            hurstChannel: hurstResult,
-            emaValue,
-            shortEmaValue,
-            trend: currentTrend,
-            timestamp: new Date().getTime(),
-          });
-
-          logger.info(
-            `Wykryto sygnał wejścia dla instancji ${instanceId} (dotknięcie dolnej bandy kanału Hursta przy cenie ${currentPrice})`
-          );
-        }
+        // Jeśli jest w throttle - po prostu ignoruj bez logowania
       }
 
       // 2. Sprawdź przekroczenie górnej bandy kanału Hursta (trigger dla trailing stopu)
@@ -504,7 +501,6 @@ class AnalysisService extends EventEmitter {
       }
 
       // 3. Sprawdź przecięcie górnej bandy i powrót do kanału (wyjście)
-      // Implementacja jak w backtestingu: cena spada poniżej górnej bandy po jej uprzednim przekroczeniu
       const upperBandCrossDown =
         currentLow <= hurstResult.upperBand &&
         currentPrice <= hurstResult.upperBand &&
@@ -512,27 +508,38 @@ class AnalysisService extends EventEmitter {
         this.extremumReached.get(instanceId);
 
       if (upperBandCrossDown) {
-        // Emituj sygnał wyjścia (po dotknięciu górnej bandy i powrocie)
-        this.emit("exitSignal", {
-          instanceId,
-          type: "upperBandCrossDown",
-          price: currentPrice,
-          hurstChannel: hurstResult,
-          emaValue,
-          timestamp: new Date().getTime(),
-        });
+        // ✅ THROTTLING dla sygnałów wyjścia
+        const signalKey = `${instanceId}-upperBandCrossDown`;
+        const lastEmission = this.lastSignalEmission.get(signalKey) || 0;
+        const now = Date.now();
 
-        // Resetuj flagi trailing stopu
-        this.extremumReached.set(instanceId, false);
-        this.highestPrices.delete(instanceId);
-        this.trailingStopActivationTime.delete(instanceId);
+        if (now - lastEmission > this.signalThrottleTime) {
+          // Emituj sygnał wyjścia (po dotknięciu górnej bandy i powrocie)
+          this.emit("exitSignal", {
+            instanceId,
+            type: "upperBandCrossDown",
+            price: currentPrice,
+            hurstChannel: hurstResult,
+            emaValue,
+            timestamp: now,
+          });
 
-        logger.info(
-          `Wykryto sygnał wyjścia dla instancji ${instanceId} (przecięcie górnej bandy kanału Hursta w dół przy cenie ${currentPrice})`
-        );
+          this.lastSignalEmission.set(signalKey, now);
 
-        // Zakończ funkcję wcześniej - wyjście przez przecięcie górnej bandy ma priorytet
-        return;
+          TradingLogger.logDebugThrottled(
+            `signal-${instanceId}-exit`,
+            `Emitowano sygnał upperBandCrossDown dla ${instanceId} @${currentPrice}`,
+            60000
+          );
+
+          // Resetuj flagi trailing stopu
+          this.extremumReached.set(instanceId, false);
+          this.highestPrices.delete(instanceId);
+          this.trailingStopActivationTime.delete(instanceId);
+
+          // Zakończ funkcję wcześniej - wyjście przez przecięcie górnej bandy ma priorytet
+          return;
+        }
       }
 
       // 4. Sprawdź trailing stop (jeśli aktywny)
@@ -572,7 +579,7 @@ class AnalysisService extends EventEmitter {
         // Ustaw bazowy trailing stop
         let trailingStopPercent = config?.signals?.trailingStop || 0.02; // Domyślnie 2%
 
-        // Dynamicznie dostosuj trailing stop na podstawie trendu - jak w backtestingu
+        // Dynamicznie dostosuj trailing stop na podstawie trendu
         if (currentTrend === "strong_up") {
           // W silnym trendzie wzrostowym daj większe pole manewru
           trailingStopPercent = trailingStopPercent * 1.5;
@@ -586,26 +593,37 @@ class AnalysisService extends EventEmitter {
 
         // Jeśli spadek przekroczył trailing stop, wygeneruj sygnał wyjścia
         if (dropFromHigh >= trailingStopPercent) {
-          this.emit("exitSignal", {
-            instanceId,
-            type: "trailingStop",
-            price: currentPrice,
-            highestPrice,
-            dropPercent: dropFromHigh * 100,
-            trailingStopPercent: trailingStopPercent * 100,
-            hurstChannel: hurstResult,
-            emaValue,
-            timestamp: new Date().getTime(),
-          });
+          // ✅ THROTTLING dla trailing stop
+          const signalKey = `${instanceId}-trailingStop`;
+          const lastEmission = this.lastSignalEmission.get(signalKey) || 0;
+          const now = Date.now();
 
-          // Resetuj flagi trailing stopu
-          this.extremumReached.set(instanceId, false);
-          this.highestPrices.delete(instanceId);
-          this.trailingStopActivationTime.delete(instanceId);
+          if (now - lastEmission > this.signalThrottleTime) {
+            this.emit("exitSignal", {
+              instanceId,
+              type: "trailingStop",
+              price: currentPrice,
+              highestPrice,
+              dropPercent: dropFromHigh * 100,
+              trailingStopPercent: trailingStopPercent * 100,
+              hurstChannel: hurstResult,
+              emaValue,
+              timestamp: now,
+            });
 
-          logger.info(
-            `Wykryto sygnał wyjścia przez trailing stop dla instancji ${instanceId} (spadek ${(dropFromHigh * 100).toFixed(2)}% od najwyższej ceny ${highestPrice})`
-          );
+            this.lastSignalEmission.set(signalKey, now);
+
+            TradingLogger.logDebugThrottled(
+              `signal-${instanceId}-trailing`,
+              `Emitowano sygnał trailingStop dla ${instanceId} @${currentPrice}`,
+              60000
+            );
+
+            // Resetuj flagi trailing stopu
+            this.extremumReached.set(instanceId, false);
+            this.highestPrices.delete(instanceId);
+            this.trailingStopActivationTime.delete(instanceId);
+          }
         }
       }
     } catch (error) {
@@ -667,6 +685,13 @@ class AnalysisService extends EventEmitter {
           instanceId
         );
       });
+
+      // ✅ Wyczyść throttling dla tej instancji
+      for (const [key, value] of this.lastSignalEmission.entries()) {
+        if (key.startsWith(`${instanceId}-`)) {
+          this.lastSignalEmission.delete(key);
+        }
+      }
 
       // Usuń instancję z map
       this.instances.delete(instanceId);

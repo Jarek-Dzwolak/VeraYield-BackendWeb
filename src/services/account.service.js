@@ -1,18 +1,8 @@
-/**
- * Account Service - serwis zarządzania środkami
- *
- * Odpowiedzialny za:
- * - Zarządzanie środkami użytkownika
- * - Alokację kapitału do instancji
- * - Śledzenie pozycji i aktualizację bilansów
- * - Obliczanie zysków i strat
- * - Przechowywanie historii transakcji
- */
-
 const User = require("../models/user.model");
 const Instance = require("../models/instance.model");
 const Signal = require("../models/signal.model");
 const logger = require("../utils/logger");
+const TradingLogger = require("../utils/trading-logger");
 const dbService = require("./db.service");
 const { EventEmitter } = require("events");
 
@@ -21,16 +11,9 @@ class AccountService extends EventEmitter {
     super();
   }
 
-  /**
-   * Dodaje środki do konta użytkownika
-   * @param {string} userId - ID użytkownika
-   * @param {number} amount - Kwota do dodania
-   * @returns {Promise<Object>} - Zaktualizowany użytkownik
-   */
   async addFundsToUser(userId, amount) {
     try {
       const user = await User.findById(userId);
-
       if (!user) {
         throw new Error(`Użytkownik o ID ${userId} nie istnieje`);
       }
@@ -39,7 +22,6 @@ class AccountService extends EventEmitter {
         throw new Error("Kwota musi być większa od zera");
       }
 
-      // Inicjalizuj financials, jeśli nie istnieje
       if (!user.financials) {
         user.financials = {
           balance: 0,
@@ -50,13 +32,10 @@ class AccountService extends EventEmitter {
         };
       }
 
-      // Dodaj środki do bilansu
       user.financials.balance += amount;
       await user.save();
 
       logger.info(`Dodano ${amount} środków do konta użytkownika ${userId}`);
-
-      // Emituj zdarzenie
       this.emit("fundsAdded", {
         userId,
         amount,
@@ -70,44 +49,27 @@ class AccountService extends EventEmitter {
     }
   }
 
-  /**
-   * Alokuje kapitał do instancji
-   * @param {string} userId - ID użytkownika
-   * @param {string} instanceId - ID instancji
-   * @param {number} amount - Kwota do alokacji
-   * @returns {Promise<Object>} - Zaktualizowana instancja
-   */
   async allocateCapitalToInstance(userId, instanceId, amount) {
     return await dbService.withTransaction(async (session) => {
       try {
-        // Pobierz użytkownika i instancję
         const user = await User.findById(userId).session(session);
         const instance = await Instance.findById(instanceId).session(session);
 
-        if (!user) {
-          throw new Error(`Użytkownik o ID ${userId} nie istnieje`);
-        }
-
-        if (!instance) {
+        if (!user) throw new Error(`Użytkownik o ID ${userId} nie istnieje`);
+        if (!instance)
           throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
-        }
-
-        if (amount <= 0) {
+        if (amount <= 0)
           throw new Error("Kwota alokacji musi być większa od zera");
-        }
 
-        // Sprawdź, czy użytkownik ma wystarczające środki
         if (!user.financials || user.financials.balance < amount) {
           throw new Error(
             `Niewystarczające środki. Dostępne: ${user.financials ? user.financials.balance : 0}, Wymagane: ${amount}`
           );
         }
 
-        // Odejmij środki z konta użytkownika
         user.financials.balance -= amount;
         await user.save({ session });
 
-        // Inicjalizuj financials dla instancji, jeśli nie istnieje
         if (!instance.financials) {
           instance.financials = {
             allocatedCapital: 0,
@@ -121,12 +83,9 @@ class AccountService extends EventEmitter {
           };
         }
 
-        // Aktualizuj kapitał instancji
         instance.financials.allocatedCapital += amount;
         instance.financials.currentBalance += amount;
         instance.financials.availableBalance += amount;
-
-        // Upewnij się, że instancja ma przypisanego użytkownika
         instance.financials.userId = user._id;
 
         await instance.save({ session });
@@ -134,8 +93,6 @@ class AccountService extends EventEmitter {
         logger.info(
           `Alokowano ${amount} kapitału do instancji ${instanceId} użytkownika ${userId}`
         );
-
-        // Emituj zdarzenie
         this.emit("capitalAllocated", {
           userId,
           instanceId,
@@ -152,20 +109,12 @@ class AccountService extends EventEmitter {
     });
   }
 
-  /**
-   * Blokuje środki na pozycję
-   * @param {string} instanceId - ID instancji
-   * @param {number} amount - Kwota do zablokowania
-   * @param {string} signalId - ID sygnału wejścia
-   * @returns {Promise<Object>} - Zaktualizowana instancja
-   */
   async lockFundsForPosition(instanceId, amount, signalId) {
     return await dbService.withTransaction(async (session) => {
       try {
         const instance = await Instance.findOne({ instanceId }).session(
           session
         );
-
         if (!instance) {
           throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
         }
@@ -176,56 +125,31 @@ class AccountService extends EventEmitter {
           );
         }
 
-        // Sprawdź dostępne środki
         if (instance.financials.availableBalance < amount) {
           throw new Error(
             `Niewystarczające środki w instancji. Dostępne: ${instance.financials.availableBalance}, Wymagane: ${amount}`
           );
         }
 
-        // Inicjalizuj tablicę openPositions, jeśli nie istnieje
         if (!instance.financials.openPositions) {
           instance.financials.openPositions = [];
         }
 
-        // Pobierz aktywną pozycję z pamięci
         const signalService = require("./signal.service");
         const activePosition = signalService.getActivePositions(instanceId);
 
         let positionId;
         let entryType = "first";
 
-        // ✅ NOWA LOGIKA - UJEDNOLICONA
         if (activePosition && activePosition.positionId) {
-          // To kolejne wejście - używamy positionId z pamięci
           positionId = activePosition.positionId;
           entryType = activePosition.entries.length === 1 ? "second" : "third";
 
-          logger.info(
-            `📍 Kolejne wejście (${entryType}) dla pozycji: ${positionId}`
-          );
-          // ✅ DODAJ TEN DEBUG
-
-          logger.info(`🔍 DEBUG BAZY przed wyszukiwaniem dla instanceId: ${instanceId}
-    Szukany positionId: ${positionId}
-    Pozycje w bazie (${instance.financials.openPositions.length}):
-    ${JSON.stringify(
-      instance.financials.openPositions.map((p, idx) => ({
-        index: idx,
-        positionId: p.positionId,
-        totalAmount: p.totalAmount,
-        hasPositionId: !!p.positionId,
-      })),
-      null,
-      2
-    )}`);
-          // Znajdź pozycję w bazie PO POSITION ID
           let positionIndex = instance.financials.openPositions.findIndex(
             (p) => p.positionId === positionId
           );
 
           if (positionIndex !== -1) {
-            // Aktualizuj istniejącą pozycję
             instance.financials.openPositions[positionIndex].entrySignals.push({
               signalId,
               amount,
@@ -234,71 +158,39 @@ class AccountService extends EventEmitter {
             });
             instance.financials.openPositions[positionIndex].totalAmount +=
               amount;
-
-            logger.info(
-              `✅ Zaktualizowano istniejącą pozycję na indeksie ${positionIndex}, nowa suma: ${instance.financials.openPositions[positionIndex].totalAmount}`
-            );
           } else {
-            // Pozycja nie znaleziona w bazie - utwórz nową z tym samym positionId
-            logger.warn(
-              `⚠️ Pozycja ${positionId} nie znaleziona w bazie, tworzę nową`
-            );
-
             instance.financials.openPositions.push({
               positionId,
               entrySignals: [
-                {
-                  signalId,
-                  amount,
-                  timestamp: new Date(),
-                  subType: entryType,
-                },
+                { signalId, amount, timestamp: new Date(), subType: entryType },
               ],
               totalAmount: amount,
               firstEntryTime: new Date(),
             });
-
-            logger.info(
-              `🔧 Utworzono nową pozycję w bazie z istniejącym positionId: ${positionId}`
-            );
           }
         } else {
-          // To pierwsze wejście - pobierz positionId z sygnału
           const signal = await Signal.findById(signalId).session(session);
           if (signal && signal.positionId) {
             positionId = signal.positionId;
-            logger.info(`🔑 Używam positionId z sygnału: ${positionId}`);
           } else {
             positionId = `position-${instanceId}-${Date.now()}`;
-            logger.warn(
-              `⚠️ Brak positionId w sygnale, generuję nowy: ${positionId}`
-            );
           }
 
           instance.financials.openPositions.push({
             positionId,
             entrySignals: [
-              {
-                signalId,
-                amount,
-                timestamp: new Date(),
-                subType: "first",
-              },
+              { signalId, amount, timestamp: new Date(), subType: "first" },
             ],
             totalAmount: amount,
             firstEntryTime: new Date(),
           });
-
-          logger.info(`🆕 Utworzono nową pozycję: ${positionId}`);
         }
 
-        // Aktualizuj bilans instancji
         instance.financials.availableBalance -= amount;
         instance.financials.lockedBalance += amount;
 
         await instance.save({ session });
 
-        // Pobierz i zaktualizuj sygnał
         const signal = await Signal.findById(signalId).session(session);
         if (signal) {
           signal.amount = amount;
@@ -308,11 +200,11 @@ class AccountService extends EventEmitter {
           await signal.save({ session });
         }
 
-        logger.info(
-          `💰 Zablokowano ${amount} środków w instancji ${instanceId} dla sygnału ${signalId}, pozycja: ${positionId}`
+        // Tylko jeden log dla każdego wejścia w pozycję
+        logger.debug(
+          `Zablokowano ${amount} środków dla pozycji ${positionId} (${entryType} entry)`
         );
 
-        // Emituj zdarzenie
         this.emit("fundsLocked", {
           instanceId,
           signalId,
@@ -330,15 +222,6 @@ class AccountService extends EventEmitter {
     });
   }
 
-  /**
-   * Aktualizuje bilans po zamknięciu pozycji
-   * @param {string} instanceId - ID instancji
-   * @param {string} entrySignalId - ID sygnału wejścia lub null jeśli używamy positionId
-   * @param {string} exitSignalId - ID sygnału wyjścia
-   * @param {number} entryAmount - Kwota wejścia (używana tylko jeśli nie znaleziono pozycji)
-   * @param {number} exitAmount - Kwota wyjścia (z zyskiem/stratą)
-   * @returns {Promise<Object>} - Zaktualizowana instancja i użytkownik
-   */
   async finalizePosition(
     instanceId,
     entrySignalId,
@@ -353,7 +236,6 @@ class AccountService extends EventEmitter {
         const instance = await Instance.findOne({ instanceId }).session(
           session
         );
-
         if (!instance) {
           throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
         }
@@ -364,44 +246,24 @@ class AccountService extends EventEmitter {
           );
         }
 
-        // Pobierz aktywną pozycję z pamięci
         const activePosition = signalService.getActivePositions(instanceId);
-        logger.debug(
-          `Aktywna pozycja z pamięci RAM: ${activePosition ? JSON.stringify(activePosition) : "brak"}`
-        );
-
-        // ✅ NOWA LOGIKA WYSZUKIWANIA POZYCJI
         let position = null;
         let positionIndex = -1;
-        let totalEntryAmount = entryAmount; // fallback
+        let totalEntryAmount = entryAmount;
 
-        // Inicjalizuj openPositions, jeśli nie istnieje
         if (!instance.financials.openPositions) {
           instance.financials.openPositions = [];
         }
 
-        logger.debug(
-          `Liczba otwartych pozycji w bazie: ${instance.financials.openPositions.length}`
-        );
-
-        // STRATEGIA 1: Szukaj po positionId z pamięci RAM
+        // Znajdź pozycję po positionId z pamięci RAM
         if (activePosition && activePosition.positionId) {
           const positionId = activePosition.positionId;
-          logger.info(
-            `🔍 STRATEGIA 1: Szukam pozycji po positionId z RAM: ${positionId}`
-          );
-
           positionIndex = instance.financials.openPositions.findIndex(
             (p) => p.positionId === positionId
           );
 
           if (positionIndex !== -1) {
             position = instance.financials.openPositions[positionIndex];
-            logger.info(
-              `✅ STRATEGIA 1: Znaleziono pozycję po positionId: ${positionId}, indeks: ${positionIndex}`
-            );
-
-            // Oblicz totalEntryAmount z bazy danych
             totalEntryAmount =
               position.totalAmount ||
               position.entrySignals?.reduce(
@@ -410,7 +272,6 @@ class AccountService extends EventEmitter {
               ) ||
               0;
 
-            // Ale jeśli mamy dane z RAM, użyj ich (są bardziej aktualne)
             if (activePosition.entries && activePosition.entries.length > 0) {
               const ramTotal = activePosition.entries.reduce(
                 (sum, entry) => sum + (entry.amount || 0),
@@ -418,22 +279,14 @@ class AccountService extends EventEmitter {
               );
               if (ramTotal > totalEntryAmount) {
                 totalEntryAmount = ramTotal;
-                logger.info(
-                  `🔄 Używam sumy z pamięci RAM: ${totalEntryAmount} (baza: ${position.totalAmount})`
-                );
               }
             }
           }
         }
 
-        // STRATEGIA 2: Fallback - szukaj wszystkich wejść dla tej instancji
+        // Fallback - szukaj wszystkich wejść dla tej instancji
         if (!position) {
-          logger.info(
-            `🔍 STRATEGIA 2: Pozycja nie znaleziona po positionId, szukam wszystkich wejść dla instancji ${instanceId}`
-          );
-
-          // Znajdź wszystkie wykonane sygnały wejścia dla tej instancji w ostatnich 24 godzinach
-          const timeWindow = 24 * 60 * 60 * 1000; // 24 godziny
+          const timeWindow = 24 * 60 * 60 * 1000;
           const searchStartTime = Date.now() - timeWindow;
 
           const allEntrySignals = await Signal.find({
@@ -445,27 +298,18 @@ class AccountService extends EventEmitter {
             .sort({ timestamp: 1 })
             .session(session);
 
-          logger.info(
-            `🔍 Znaleziono ${allEntrySignals.length} sygnałów wejścia dla instancji ${instanceId} w ostatnich 24h`
-          );
-
           if (allEntrySignals.length > 0) {
-            // Grupuj sygnały po positionId (jeśli istnieje) lub weź wszystkie jako jedną grupę
             const positionGroups = new Map();
-
             for (const signal of allEntrySignals) {
               const groupKey = signal.positionId || "default-group";
-
               if (!positionGroups.has(groupKey)) {
                 positionGroups.set(groupKey, []);
               }
               positionGroups.get(groupKey).push(signal);
             }
 
-            // Weź największą grupę (prawdopodobnie aktualna pozycja)
             let largestGroup = [];
             let largestGroupKey = null;
-
             for (const [groupKey, signals] of positionGroups.entries()) {
               if (signals.length > largestGroup.length) {
                 largestGroup = signals;
@@ -473,11 +317,6 @@ class AccountService extends EventEmitter {
               }
             }
 
-            logger.info(
-              `📊 Największa grupa sygnałów: ${largestGroup.length} wejść (klucz: ${largestGroupKey})`
-            );
-
-            // Sprawdź czy między tymi wejściami nie było już sygnału wyjścia
             const firstEntry = largestGroup[0];
             const lastEntry = largestGroup[largestGroup.length - 1];
 
@@ -487,18 +326,16 @@ class AccountService extends EventEmitter {
               status: "executed",
               timestamp: {
                 $gte: firstEntry.timestamp,
-                $lte: lastEntry.timestamp + 60000, // +1 minuta bufor
+                $lte: lastEntry.timestamp + 60000,
               },
             }).session(session);
 
             if (exitSignalsBetween.length === 0) {
-              // To są nasze wejścia bez zamknięcia - używaj ich
               totalEntryAmount = largestGroup.reduce(
                 (sum, signal) => sum + (signal.amount || 0),
                 0
               );
 
-              // Odtwórz pozycję w bazie na podstawie sygnałów
               const reconstructedPosition = {
                 positionId: largestGroupKey,
                 entrySignals: largestGroup.map((signal) => ({
@@ -514,24 +351,12 @@ class AccountService extends EventEmitter {
               instance.financials.openPositions.push(reconstructedPosition);
               positionIndex = instance.financials.openPositions.length - 1;
               position = reconstructedPosition;
-
-              logger.info(
-                `🔧 Odtworzono pozycję w bazie: ${largestGroup.length} wejść, suma: ${totalEntryAmount}`
-              );
-            } else {
-              logger.warn(
-                `⚠️ Znaleziono ${exitSignalsBetween.length} sygnałów wyjścia między wejściami - pozycja może być już zamknięta`
-              );
             }
           }
         }
 
-        // STRATEGIA 3: Ostateczny fallback - użyj danych z pamięci RAM
+        // Ostateczny fallback - użyj danych z pamięci RAM
         if (!position && activePosition) {
-          logger.info(
-            `🔍 STRATEGIA 3: Używam danych z pamięci RAM jako ostateczny fallback`
-          );
-
           if (activePosition.entries && activePosition.entries.length > 0) {
             totalEntryAmount = activePosition.entries.reduce(
               (sum, entry) => sum + (entry.amount || 0),
@@ -555,35 +380,26 @@ class AccountService extends EventEmitter {
             instance.financials.openPositions.push(fallbackPosition);
             positionIndex = instance.financials.openPositions.length - 1;
             position = fallbackPosition;
-
-            logger.info(
-              `🔧 Utworzono pozycję fallback z RAM: ${activePosition.entries.length} wejść, suma: ${totalEntryAmount}`
-            );
           }
         }
 
-        // Jeśli nadal nie mamy pozycji, rzuć błąd
         if (!position) {
           throw new Error(
-            `❌ Nie znaleziono otwartej pozycji dla instancji ${instanceId} przy użyciu wszystkich strategii`
+            `Nie znaleziono otwartej pozycji dla instancji ${instanceId}`
           );
         }
 
-        // Oblicz zysk na podstawie rzeczywistej kwoty wejść i kwoty wyjścia
         const profit = exitAmount - totalEntryAmount;
         const profitPercent = (profit / totalEntryAmount) * 100;
 
-        logger.info(
-          `💰 Finalizacja pozycji: entryAmount=${totalEntryAmount}, exitAmount=${exitAmount}, profit=${profit}, profitPercent=${profitPercent}`
+        // Tylko jeden główny log finalizacji pozycji
+        logger.debug(
+          `Finalizacja pozycji ${position.positionId}: entry=${totalEntryAmount}, exit=${exitAmount}, profit=${profit.toFixed(2)}`
         );
 
-        // Pobierz szczegóły pozycji przed usunięciem
         const positionDetails = JSON.parse(JSON.stringify(position));
-
-        // Usuń pozycję z otwartych
         instance.financials.openPositions.splice(positionIndex, 1);
 
-        // Dodaj do zamkniętych pozycji
         if (!instance.financials.closedPositions) {
           instance.financials.closedPositions = [];
         }
@@ -598,7 +414,6 @@ class AccountService extends EventEmitter {
           closedAt: new Date(),
         });
 
-        // Aktualizuj bilans instancji
         instance.financials.lockedBalance -= totalEntryAmount;
         instance.financials.availableBalance += exitAmount;
         instance.financials.currentBalance =
@@ -608,7 +423,6 @@ class AccountService extends EventEmitter {
 
         await instance.save({ session });
 
-        // Pobierz i zaktualizuj sygnał wyjścia
         const exitSignal = await Signal.findById(exitSignalId).session(session);
         if (exitSignal) {
           exitSignal.profit = profit;
@@ -618,12 +432,10 @@ class AccountService extends EventEmitter {
           exitSignal.executedAt = new Date();
           exitSignal.positionId = position.positionId;
 
-          // Dodaj referencje do wszystkich sygnałów wejścia
           if (position.entrySignals && position.entrySignals.length > 0) {
             exitSignal.entrySignalIds = position.entrySignals.map(
               (entry) => entry.signalId
             );
-            // Dla zachowania kompatybilności wstecz
             exitSignal.entrySignalId = position.entrySignals[0].signalId;
           } else if (entrySignalId) {
             exitSignal.entrySignalId = entrySignalId;
@@ -632,13 +444,10 @@ class AccountService extends EventEmitter {
           await exitSignal.save({ session });
         }
 
-        // Aktualizuj dane użytkownika
         const user = await User.findById(instance.financials.userId).session(
           session
         );
-
         if (user) {
-          // Inicjalizuj financials, jeśli nie istnieje
           if (!user.financials) {
             user.financials = {
               balance: 0,
@@ -649,7 +458,6 @@ class AccountService extends EventEmitter {
             };
           }
 
-          // Pobierz sygnały, aby uzyskać więcej informacji
           let entryPrice = 0;
           let exitPrice = 0;
 
@@ -666,7 +474,6 @@ class AccountService extends EventEmitter {
             exitPrice = exitSignal.price;
           }
 
-          // Dodaj transakcję do historii użytkownika
           user.financials.tradeHistory.push({
             instanceId,
             symbol: instance.symbol || "UNKNOWN",
@@ -685,7 +492,6 @@ class AccountService extends EventEmitter {
             ],
           });
 
-          // Aktualizuj statystyki użytkownika
           user.financials.totalProfit += profit;
           user.financials.totalTrades += 1;
 
@@ -694,15 +500,10 @@ class AccountService extends EventEmitter {
           }
 
           user.financials.lastTradeDate = new Date();
-
           await user.save({ session });
         }
 
-        logger.info(
-          `✅ Sfinalizowano pozycję w instancji ${instanceId}. Zysk: ${profit}, unlocked amount: ${totalEntryAmount}`
-        );
-
-        // ENHANCED SAFETY CHECK: Sprawdź lockedBalance vs rzeczywiste otwarte pozycje
+        // Sprawdź spójność lockedBalance
         const actualLockedAmount = instance.financials.openPositions
           ? instance.financials.openPositions.reduce(
               (sum, pos) => sum + (pos.totalAmount || 0),
@@ -714,12 +515,6 @@ class AccountService extends EventEmitter {
           Math.abs(instance.financials.lockedBalance - actualLockedAmount) >
           0.01
         ) {
-          logger.warn(`⚠️ Wykryto rozbieżność w lockedBalance dla instancji ${instanceId}. 
-          Zapisane: ${instance.financials.lockedBalance}, 
-          Rzeczywiste z pozycji: ${actualLockedAmount}. 
-          Otwarte pozycje: ${instance.financials.openPositions?.length || 0}. 
-          Wykonuję korektę.`);
-
           const difference =
             instance.financials.lockedBalance - actualLockedAmount;
           instance.financials.lockedBalance = actualLockedAmount;
@@ -727,15 +522,9 @@ class AccountService extends EventEmitter {
           instance.financials.currentBalance =
             instance.financials.availableBalance +
             instance.financials.lockedBalance;
-
           await instance.save({ session });
-
-          logger.info(
-            `🔧 Skorygowano lockedBalance o ${difference} dla instancji ${instanceId}`
-          );
         }
 
-        // Emituj zdarzenie
         this.emit("positionClosed", {
           instanceId,
           positionId: position.positionId,
@@ -750,28 +539,21 @@ class AccountService extends EventEmitter {
 
         return { instance, user };
       } catch (error) {
-        logger.error(`❌ Błąd podczas finalizacji pozycji: ${error.message}`);
+        logger.error(`Błąd podczas finalizacji pozycji: ${error.message}`);
         throw error;
       }
     });
   }
-  /**
-   * Pobiera informacje o saldzie użytkownika
-   * @param {string} userId - ID użytkownika
-   * @returns {Promise<Object>} - Informacje o saldzie
-   */
+
   async getUserBalance(userId) {
     try {
       const user = await User.findById(userId);
-
       if (!user) {
         throw new Error(`Użytkownik o ID ${userId} nie istnieje`);
       }
 
-      // Pobierz wszystkie instancje użytkownika
       const instances = await Instance.find({ "financials.userId": userId });
 
-      // Oblicz całkowity zaalokowany kapitał i bieżący bilans
       let totalAllocated = 0;
       let totalCurrent = 0;
 
@@ -816,17 +598,9 @@ class AccountService extends EventEmitter {
     }
   }
 
-  /**
-   * Pobiera historię transakcji użytkownika
-   * @param {string} userId - ID użytkownika
-   * @param {number} limit - Limit wyników
-   * @param {number} skip - Liczba pominiętych wyników
-   * @returns {Promise<Array>} - Historia transakcji
-   */
   async getUserTradeHistory(userId, limit = 50, skip = 0) {
     try {
       const user = await User.findById(userId);
-
       if (!user) {
         throw new Error(`Użytkownik o ID ${userId} nie istnieje`);
       }
@@ -835,7 +609,6 @@ class AccountService extends EventEmitter {
         return [];
       }
 
-      // Sortuj według daty zamknięcia (od najnowszych)
       const sortedHistory = user.financials.tradeHistory
         .sort((a, b) => b.exitTime - a.exitTime)
         .slice(skip, skip + limit);
@@ -849,20 +622,13 @@ class AccountService extends EventEmitter {
     }
   }
 
-  /**
-   * Pobiera szczegóły instancji z perspektywy finansowej
-   * @param {string} instanceId - ID instancji
-   * @returns {Promise<Object>} - Szczegóły instancji
-   */
   async getInstanceFinancialDetails(instanceId) {
     try {
       const instance = await Instance.findById(instanceId);
-
       if (!instance) {
         throw new Error(`Instancja o ID ${instanceId} nie istnieje`);
       }
 
-      // Pobierz aktywne sygnały
       const activeSignals = await Signal.find({
         instanceId,
         type: "entry",
@@ -875,7 +641,6 @@ class AccountService extends EventEmitter {
         },
       });
 
-      // Pobierz historię sygnałów
       const historicalSignals = await Signal.find({
         instanceId,
         type: "exit",
@@ -923,6 +688,5 @@ class AccountService extends EventEmitter {
   }
 }
 
-// Eksportuj singleton
 const accountService = new AccountService();
 module.exports = accountService;
