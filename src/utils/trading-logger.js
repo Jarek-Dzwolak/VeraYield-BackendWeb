@@ -1,6 +1,6 @@
 /**
  * Trading Logger - dedykowane funkcje logowania dla operacji tradingowych
- * Dodaj to do src/utils/trading-logger.js
+ * ✅ ROZSZERZONE O NOWE LOGI GÓRNEJ BANDY
  */
 
 const logger = require("./logger");
@@ -40,6 +40,56 @@ class TradingLogger {
     const durationStr = duration ? this.formatDuration(duration) : "Unknown";
     logger.info(
       `[EXIT] ${symbol} @${price} | ${type} | Profit: ${profitSign}${profitPercent.toFixed(2)}% (${profitSign}${profit.toFixed(2)} USDT) | Duration: ${durationStr} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE LOGI - Stan górnej bandy
+   */
+  static logUpperBandState(instanceId, action, details = "") {
+    const actionEmojis = {
+      initialized: "🔧",
+      exit_started: "🚀",
+      exit_confirmed: "✅",
+      exit_reset: "🔄",
+      exit_reset_warning: "⚠️",
+      exit_reset_cancelled: "❌",
+      return_started: "🔽",
+      return_confirmed: "🎯",
+      return_reset: "🔄",
+      return_reset_warning: "⚠️",
+      return_reset_cancelled: "❌",
+    };
+
+    const emoji = actionEmojis[action] || "📊";
+
+    logger.info(
+      `[UPPER BAND] ${emoji} ${action.toUpperCase()} | ${details} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE LOGI - Postęp czasowy górnej bandy
+   */
+  static logUpperBandProgress(
+    instanceId,
+    symbol,
+    state,
+    minutesElapsed,
+    currentPrice,
+    upperBand
+  ) {
+    const stateNames = {
+      exit_counting: "EXIT COUNTING",
+      return_counting: "RETURN COUNTING",
+    };
+
+    const stateName = stateNames[state] || state.toUpperCase();
+    const priceVsBand = ((currentPrice / upperBand - 1) * 100).toFixed(2);
+    const priceDirection = priceVsBand >= 0 ? "+" : "";
+
+    logger.info(
+      `[UPPER BAND] 📊 ${stateName} | ${symbol} | ${minutesElapsed}/15 min | Price: ${currentPrice} (${priceDirection}${priceVsBand}%) | Instance: ${instanceId.slice(-8)}`
     );
   }
 
@@ -154,6 +204,59 @@ class TradingLogger {
     }
     logger.info(
       `[CONFIG] ${action} | Instance: ${instanceId.slice(-8)} | ${JSON.stringify(safeConfig)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE LOGI - Szczegółowe logowanie cyklu górnej bandy
+   */
+  static logUpperBandCycleStart(instanceId, symbol, triggerPrice, upperBand) {
+    const percentAbove = ((triggerPrice / upperBand - 1) * 100).toFixed(2);
+    logger.info(
+      `[UPPER BAND] 🚀 CYCLE START | ${symbol} | Trigger: ${triggerPrice} (+${percentAbove}% above ${upperBand.toFixed(2)}) | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  static logUpperBandCycleComplete(
+    instanceId,
+    symbol,
+    exitPrice,
+    totalMinutes
+  ) {
+    logger.info(
+      `[UPPER BAND] 🎯 CYCLE COMPLETE | ${symbol} | Exit: ${exitPrice} | Total time: ${totalMinutes} min | POSITION CLOSED | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE LOGI - Diagnostyka reset warunków
+   */
+  static logUpperBandResetDiagnostic(
+    instanceId,
+    symbol,
+    resetType,
+    currentPrice,
+    threshold,
+    remainingTime
+  ) {
+    const timeStr = this.formatDuration(remainingTime);
+    logger.warn(
+      `[UPPER BAND] ⚠️ RESET RISK | ${symbol} | ${resetType} | Price: ${currentPrice} vs threshold: ${threshold.toFixed(2)} | Time to reset: ${timeStr} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE LOGI - Status okresowy (co 5 minut)
+   */
+  static logUpperBandPeriodicStatus(
+    instanceId,
+    symbol,
+    state,
+    progress,
+    additionalInfo = ""
+  ) {
+    logger.info(
+      `[UPPER BAND] 📊 STATUS | ${symbol} | State: ${state} | Progress: ${progress} ${additionalInfo} | Instance: ${instanceId.slice(-8)}`
     );
   }
 }

@@ -574,6 +574,15 @@ class SignalService extends EventEmitter {
                 trailingStopPercent: signalData.trailingStopPercent,
               }
             : {}),
+          // ✅ NOWE - Obsługa upperBandReturn
+          ...(type === "upperBandReturn" && signalData.metadata
+            ? {
+                exitReason: signalData.metadata.exitReason,
+                totalCycleTime: signalData.metadata.totalCycleTime,
+                returnTrigger: signalData.metadata.returnTrigger,
+                finalPrice: signalData.metadata.finalPrice,
+              }
+            : {}),
         },
       });
 
