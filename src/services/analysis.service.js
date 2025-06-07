@@ -59,7 +59,29 @@ class AnalysisService extends EventEmitter {
   }
 
   /**
-   * ✅ NOWA METODA - Aktualizacja stanu górnej bandy
+   * ✅ NOWA METODA - Reset stanu górnej bandy
+   */
+  resetUpperBandState(instanceId) {
+    if (this.upperBandStates.has(instanceId)) {
+      const timers = this.upperBandTimers.get(instanceId);
+
+      // Wyczyść timery jeśli istnieją
+      if (timers) {
+        if (timers.stateTimer) clearTimeout(timers.stateTimer);
+        if (timers.resetTimer) clearTimeout(timers.resetTimer);
+      }
+
+      // Usuń state
+      this.upperBandStates.delete(instanceId);
+      this.upperBandTimers.delete(instanceId);
+
+      // ✅ NOWY ZWIĘZŁY LOG
+      TradingLogger.logUpperBandReset(instanceId, "Manual reset");
+    }
+  }
+
+  /**
+   * ✅ POPRAWIONA METODA - Aktualizacja stanu górnej bandy TYLKO gdy istnieje pozycja
    */
   updateUpperBandState(
     instanceId,
@@ -68,6 +90,25 @@ class AnalysisService extends EventEmitter {
     currentLow,
     hurstResult
   ) {
+    // ✅ SPRAWDŹ CZY MAMY AKTYWNĄ POZYCJĘ
+    const signalService = require("./signal.service");
+    const activePosition = signalService.getActivePositions(instanceId);
+
+    // ❌ JEŚLI BRAK POZYCJI - NIE ROBIMY NIC Z GÓRNĄ BANDĄ
+    if (!activePosition || activePosition.status !== "active") {
+      // Jeśli był aktywny stan, zresetuj go
+      if (this.upperBandStates.has(instanceId)) {
+        this.resetUpperBandState(instanceId);
+        TradingLogger.logUpperBandState(
+          instanceId,
+          "reset_no_position",
+          "No active position - state cleared"
+        );
+      }
+      return;
+    }
+
+    // ✅ MAMY POZYCJĘ - KONTYNUUJ NORMALNĄ LOGIKĘ
     if (!this.upperBandStates.has(instanceId)) {
       this.initializeUpperBandState(instanceId);
     }
@@ -468,15 +509,17 @@ class AnalysisService extends EventEmitter {
   }
 
   /**
-   * Resetuje śledzenie trailing stopu dla instancji
+   * ✅ POPRAWIONA METODA - Resetuje śledzenie trailing stopu i stanu górnej bandy dla instancji
    */
   resetTrailingStopTracking(instanceId) {
     this.extremumReached.set(instanceId, false);
     this.highestPrices.delete(instanceId);
     this.trailingStopActivationTime.delete(instanceId);
-    logger.debug(
-      `Zresetowano śledzenie trailing stopu dla instancji ${instanceId}`
-    );
+
+    // ✅ NOWE - Reset stanu górnej bandy
+    this.resetUpperBandState(instanceId);
+
+    TradingLogger.logUpperBandReset(instanceId, "Trailing stop reset");
   }
 
   /**
@@ -500,7 +543,7 @@ class AnalysisService extends EventEmitter {
         shortEmaValue
       );
 
-      // ✅ 1. NOWA LOGIKA GÓRNEJ BANDY - bez throttling
+      // ✅ 1. NOWA LOGIKA GÓRNEJ BANDY - bez throttling + sprawdzanie pozycji
       this.updateUpperBandState(
         instanceId,
         currentPrice,
@@ -706,8 +749,8 @@ class AnalysisService extends EventEmitter {
       this.indicators.set(instanceId, { hurstChannel, ema, shortEma });
       this.extremumReached.set(instanceId, false);
 
-      // ✅ INICJALIZACJA NOWEGO STANU GÓRNEJ BANDY
-      this.initializeUpperBandState(instanceId);
+      // ✅ INICJALIZACJA NOWEGO STANU GÓRNEJ BANDY - ALE TYLKO JEŚLI MAMY POZYCJĘ
+      // (nie robimy tego tutaj automatycznie, zostanie zainicjalizowane przy pierwszym sprawdzeniu pozycji)
 
       this.updateInitialIndicators(instanceId);
 
@@ -757,8 +800,7 @@ class AnalysisService extends EventEmitter {
       }
 
       // ✅ WYCZYŚĆ NOWY STAN GÓRNEJ BANDY
-      this.upperBandStates.delete(instanceId);
-      this.upperBandTimers.delete(instanceId);
+      this.resetUpperBandState(instanceId);
 
       this.instances.delete(instanceId);
       this.indicators.delete(instanceId);

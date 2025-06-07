@@ -219,7 +219,8 @@ class InstanceService {
           `Nie udało się zainicjalizować analizy dla instancji ${instanceId}`
         );
       }
-
+      // ✅ NOWE - Wyczyść stan górnej bandy przy starcie instancji
+      analysisService.resetUpperBandState(instanceId);
       this.instances.set(instanceId, {
         ...instance.toObject(),
         lastStarted: new Date(),
@@ -251,6 +252,9 @@ class InstanceService {
       if (!this.instances.has(instanceId)) {
         return true; // Już zatrzymana
       }
+
+      // ✅ NOWE - Wyczyść stan górnej bandy przed zatrzymaniem
+      analysisService.resetUpperBandState(instanceId);
 
       analysisService.stopInstance(instanceId);
       this.instances.delete(instanceId);

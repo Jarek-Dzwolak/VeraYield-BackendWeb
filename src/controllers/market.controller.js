@@ -125,12 +125,16 @@ const getHistoricalCandles = async (req, res) => {
         message: "Invalid interval format",
       });
     }
-
     // Pobierz dane historyczne
     const candles = await binanceService.getHistoricalCandles(
       symbol,
       interval,
       parseInt(limit)
+    );
+
+    // ✅ ZWIĘZŁY LOG zamiast szczegółowego
+    logger.debug(
+      `Chart data: ${symbol} ${interval} (${candles.length} candles)`
     );
 
     res.json({
@@ -181,6 +185,11 @@ const getHistoricalCandlesByInterval = async (req, res) => {
       parseInt(limit),
       startTime ? parseInt(startTime) : undefined,
       endTime ? parseInt(endTime) : undefined
+    );
+
+    // ✅ ZWIĘZŁY LOG zamiast szczegółowego
+    logger.debug(
+      `Chart data: ${symbol} ${interval} (${candles.length} candles)`
     );
 
     res.json({

@@ -259,6 +259,23 @@ class TradingLogger {
       `[UPPER BAND] 📊 STATUS | ${symbol} | State: ${state} | Progress: ${progress} ${additionalInfo} | Instance: ${instanceId.slice(-8)}`
     );
   }
+  /**
+   * ✅ NOWE - Loguje reset stanu górnej bandy (zwięźle)
+   */
+  static logUpperBandReset(instanceId, reason = "") {
+    logger.debug(
+      `[UPPER BAND] 🔄 RESET | ${reason} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ NOWE - Loguje pobranie danych do wykresu (grupowanie)
+   */
+  static logChartDataFetch(symbol, intervals, totalCandles) {
+    logger.info(
+      `[CHART] 📊 Data fetched | ${symbol} | Intervals: ${intervals.join(",")} | Total: ${totalCandles} candles`
+    );
+  }
 }
 
 module.exports = TradingLogger;

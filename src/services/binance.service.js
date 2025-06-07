@@ -72,9 +72,6 @@ class BinanceService extends EventEmitter {
       const key = `${symbol}-${interval}`;
       this.candleData.set(key, candles);
 
-      logger.info(
-        `Pobrano ${candles.length} historycznych świec dla ${symbol} (${interval})`
-      );
       return candles;
     } catch (error) {
       logger.error(

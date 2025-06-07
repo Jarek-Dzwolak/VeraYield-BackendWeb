@@ -280,6 +280,12 @@ class SignalService extends EventEmitter {
 
           this.activePositions.set(instanceId, newPosition);
           this.lastEntryTimes.set(instanceId, timestamp);
+
+          // ✅ NOWE - Reset stanu górnej bandy przy nowej pozycji
+          const analysisService = require("./analysis.service");
+          analysisService.resetUpperBandState(instanceId);
+
+          // Istniejący reset trailing stop (który teraz też resetuje górną bandę)
           analysisService.resetTrailingStopTracking(instanceId);
 
           // GŁÓWNY LOG WEJŚCIA
@@ -704,6 +710,11 @@ class SignalService extends EventEmitter {
         }
 
         this.positionHistory.get(instanceId).push({ ...currentPosition });
+
+        // ✅ NOWE - Reset stanu górnej bandy po zamknięciu pozycji
+        const analysisService = require("./analysis.service");
+        analysisService.resetUpperBandState(instanceId);
+
         this.activePositions.delete(instanceId);
         this.lastEntryTimes.delete(instanceId);
 
