@@ -120,8 +120,8 @@ class AnalysisService extends EventEmitter {
     const upperBand = hurstResult.upperBand;
     const exitTrigger = upperBand * 1.002; // +0.2%
     const returnTrigger = upperBand * 0.998; // -0.2%
-    const exitResetTrigger = upperBand * 0.995; // -0.5% dla resetu wyjścia
-    const returnResetTrigger = upperBand * 1.005; // +0.5% dla resetu powrotu
+    const exitResetTrigger = upperBand * 0.9975; // -0.25% (było -0.5%)
+    const returnResetTrigger = upperBand * 1.0025; // +0.25% (było +0.5%)
 
     // ✅ LOG PROGRESS CO 2 MINUTY
     if (now - timers.lastLogTime > 120000) {
