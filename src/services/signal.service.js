@@ -1,6 +1,6 @@
 const bybitService = require("./bybit.service");
-const analysisService = require("./analysis.service");
 const accountService = require("./account.service");
+const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
 const TradingLogger = require("../utils/trading-logger");
 const { EventEmitter } = require("events");
@@ -14,11 +14,13 @@ class SignalService extends EventEmitter {
     this.activePositions = new Map();
     this.positionHistory = new Map();
     this.lastEntryTimes = new Map();
-    this.lastRejectionLogs = new Map(); // Śledzenie ostatnich logów odrzuceń
-    this.setupListeners();
+    this.lastRejectionLogs = new Map();
   }
 
   setupListeners() {
+    const analysisService = require("./analysis.service");
+    analysisService.setSignalService(this);
+
     analysisService.on("entrySignal", (data) => {
       this.processEntrySignal(data);
     });
@@ -103,408 +105,419 @@ class SignalService extends EventEmitter {
   }
 
   async processEntrySignal(signalData) {
-    try {
-      const { instanceId, type, price, timestamp, trend } = signalData;
-      let currentPosition = this.activePositions.get(instanceId);
+    return mutex.withLock(`entry-${signalData.instanceId}`, async () => {
+      try {
+        const { instanceId, type, price, timestamp, trend } = signalData;
+        let currentPosition = this.activePositions.get(instanceId);
 
-      const instance = await Instance.findOne({ instanceId });
-      if (!instance) {
-        return; // Cicho ignoruj nieistniejące instancje
-      }
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          return;
+        }
 
-      if (!instance.financials || instance.financials.availableBalance <= 0) {
-        const rejectionKey = `${instanceId}-no-funds`;
-        this.lastRejectionLogs.set(
-          rejectionKey,
-          TradingLogger.logSignalRejected(
-            instanceId,
-            instance.symbol,
-            "No available funds",
-            this.lastRejectionLogs.get(rejectionKey)
-          )
-        );
-        return;
-      }
-
-      const strategyParams = instance.strategy.parameters;
-      const firstEntryPercent =
-        strategyParams.capitalAllocation?.firstEntry * 100 || 10;
-      const secondEntryPercent =
-        strategyParams.capitalAllocation?.secondEntry * 100 || 25;
-      const thirdEntryPercent =
-        strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
-      const minEntryTimeGap =
-        strategyParams.signals?.minEntryTimeGap || 7200000;
-
-      const currentPrice = await bybitService.getCurrentPrice(instance.symbol);
-      const instrumentInfo = await bybitService.getCachedInstrumentInfo(
-        instance.symbol
-      );
-      const leverage = instance.bybitConfig?.leverage || 3;
-
-      if (!currentPosition) {
-        const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
-
-        if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-          const rejectionKey = `${instanceId}-bad-trend`;
+        if (!instance.financials || instance.financials.availableBalance <= 0) {
+          const rejectionKey = `${instanceId}-no-funds`;
           this.lastRejectionLogs.set(
             rejectionKey,
             TradingLogger.logSignalRejected(
               instanceId,
               instance.symbol,
-              `Bad trend: ${trend}`,
+              "No available funds",
               this.lastRejectionLogs.get(rejectionKey)
             )
           );
-
-          await this.createSignalInDatabase({
-            instanceId,
-            symbol: instance.symbol,
-            type: "entry-rejected",
-            subType: "trend-filter",
-            price,
-            timestamp,
-            status: "canceled",
-            metadata: { trend },
-          });
           return;
         }
 
-        const positionId = `position-${instanceId}-${Date.now()}`;
-        const optimalEntry = await this._calculateOptimalContractQuantity(
-          firstEntryPercent,
-          instance.financials.availableBalance,
-          currentPrice,
-          leverage,
-          instrumentInfo
+        const strategyParams = instance.strategy.parameters;
+        const firstEntryPercent =
+          strategyParams.capitalAllocation?.firstEntry * 100 || 10;
+        const secondEntryPercent =
+          strategyParams.capitalAllocation?.secondEntry * 100 || 25;
+        const thirdEntryPercent =
+          strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
+        const minEntryTimeGap =
+          strategyParams.signals?.minEntryTimeGap || 7200000;
+
+        const currentPrice = await bybitService.getCurrentPrice(
+          instance.symbol
         );
+        const instrumentInfo = await bybitService.getCachedInstrumentInfo(
+          instance.symbol
+        );
+        const leverage = instance.bybitConfig?.leverage || 3;
 
-        const signal = await this.createSignalInDatabase({
-          instanceId,
-          symbol: instance.symbol,
-          type: "entry",
-          subType: "first",
-          price,
-          allocation: optimalEntry.actualAllocationPercent / 100,
-          amount: optimalEntry.actualMargin,
-          timestamp,
-          status: "pending",
-          positionId: positionId,
-          metadata: {
-            trend,
-            positionId,
-            theoreticalAllocation: firstEntryPercent / 100,
-            theoreticalQuantity: optimalEntry.theoreticalQuantity,
-            adjustedQuantity: optimalEntry.adjustedQuantity,
-          },
-        });
+        if (!currentPosition) {
+          const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
 
-        try {
-          await accountService.lockFundsForPosition(
-            instanceId,
-            optimalEntry.actualMargin,
-            signal._id
-          );
-
-          if (instance.bybitConfig && instance.bybitConfig.apiKey) {
-            try {
-              await bybitService.setLeverage(
-                instance.bybitConfig.apiKey,
-                instance.bybitConfig.apiSecret,
-                instance.symbol,
-                leverage
-              );
-              await bybitService.setMarginMode(
-                instance.bybitConfig.apiKey,
-                instance.bybitConfig.apiSecret,
-                instance.symbol,
-                instance.bybitConfig.marginMode === "isolated" ? 1 : 0
-              );
-
-              const orderResult = await bybitService.openPosition(
-                instance.bybitConfig.apiKey,
-                instance.bybitConfig.apiSecret,
-                instance.symbol,
-                "Buy",
-                optimalEntry.adjustedQuantity.toString(),
-                0,
-                instance.bybitConfig.subaccountId
-              );
-
-              TradingLogger.logBybitSuccess(
+          if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
+            const rejectionKey = `${instanceId}-bad-trend`;
+            this.lastRejectionLogs.set(
+              rejectionKey,
+              TradingLogger.logSignalRejected(
                 instanceId,
                 instance.symbol,
-                "Order placed",
-                `ID: ${orderResult.result?.orderId}`
-              );
+                `Bad trend: ${trend}`,
+                this.lastRejectionLogs.get(rejectionKey)
+              )
+            );
 
-              signal.metadata.bybitOrderId = orderResult.result?.orderId;
-              signal.metadata.bybitOrderLinkId =
-                orderResult.result?.orderLinkId;
-              signal.metadata.contractQuantity = optimalEntry.adjustedQuantity;
-              await signal.save();
-            } catch (error) {
-              TradingLogger.logBybitError(
-                instanceId,
-                instance.symbol,
-                "Order placement",
-                error.message
-              );
-            }
+            await this.createSignalInDatabase({
+              instanceId,
+              symbol: instance.symbol,
+              type: "entry-rejected",
+              subType: "trend-filter",
+              price,
+              timestamp,
+              status: "canceled",
+              metadata: { trend },
+            });
+            return;
           }
 
-          const newPosition = {
+          const positionId = `position-${instanceId}-${Date.now()}`;
+          const optimalEntry = await this._calculateOptimalContractQuantity(
+            firstEntryPercent,
+            instance.financials.availableBalance,
+            currentPrice,
+            leverage,
+            instrumentInfo
+          );
+
+          const signal = await this.createSignalInDatabase({
             instanceId,
             symbol: instance.symbol,
-            positionId: positionId,
-            entryTime: timestamp,
-            entryPrice: price,
-            capitalAllocation: optimalEntry.actualAllocationPercent / 100,
-            capitalAmount: optimalEntry.actualMargin,
-            status: "active",
-            entries: [
-              {
-                time: timestamp,
-                price,
-                type,
-                trend,
-                allocation: optimalEntry.actualAllocationPercent / 100,
-                amount: optimalEntry.actualMargin,
-                signalId: signal._id.toString(),
-                contractQuantity: optimalEntry.adjustedQuantity,
-                positionId: positionId,
-              },
-            ],
-            history: [],
-          };
-
-          this.activePositions.set(instanceId, newPosition);
-          this.lastEntryTimes.set(instanceId, timestamp);
-
-          // ✅ NOWE - Reset stanu górnej bandy przy nowej pozycji
-          const analysisService = require("./analysis.service");
-          analysisService.resetUpperBandState(instanceId);
-
-          // Istniejący reset trailing stop (który teraz też resetuje górną bandę)
-          analysisService.resetTrailingStopTracking(instanceId);
-
-          // GŁÓWNY LOG WEJŚCIA
-          TradingLogger.logEntry(
-            instanceId,
-            instance.symbol,
+            type: "entry",
+            subType: "first",
             price,
-            "First entry",
-            trend,
-            optimalEntry.actualAllocationPercent / 100,
-            optimalEntry.actualMargin,
-            optimalEntry.adjustedQuantity
-          );
-
-          this.emit("newPosition", newPosition);
-        } catch (error) {
-          TradingLogger.logTradingError(
-            instanceId,
-            instance.symbol,
-            error.message,
-            "Lock funds failed"
-          );
-          await Signal.findByIdAndUpdate(signal._id, {
-            status: "canceled",
-            metadata: {
-              cancelReason: `Nie udało się zablokować środków: ${error.message}`,
-            },
-          });
-        }
-      } else if (currentPosition.status === "active") {
-        const entryCount = currentPosition.entries.length;
-
-        if (entryCount >= 3) {
-          const rejectionKey = `${instanceId}-max-entries`;
-          this.lastRejectionLogs.set(
-            rejectionKey,
-            TradingLogger.logSignalRejected(
-              instanceId,
-              instance.symbol,
-              "Max 3 entries reached",
-              this.lastRejectionLogs.get(rejectionKey)
-            )
-          );
-          return;
-        }
-
-        const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
-        if (timestamp - lastEntryTime < minEntryTimeGap) {
-          const rejectionKey = `${instanceId}-time-gap`;
-          this.lastRejectionLogs.set(
-            rejectionKey,
-            TradingLogger.logSignalRejected(
-              instanceId,
-              instance.symbol,
-              `Too soon: ${((timestamp - lastEntryTime) / 60000).toFixed(1)}min < ${minEntryTimeGap / 60000}min`,
-              this.lastRejectionLogs.get(rejectionKey)
-            )
-          );
-          return;
-        }
-
-        const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
-        if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-          const rejectionKey = `${instanceId}-trend-${entryCount + 1}`;
-          this.lastRejectionLogs.set(
-            rejectionKey,
-            TradingLogger.logSignalRejected(
-              instanceId,
-              instance.symbol,
-              `Bad trend for entry ${entryCount + 1}: ${trend}`,
-              this.lastRejectionLogs.get(rejectionKey)
-            )
-          );
-
-          await this.createSignalInDatabase({
-            instanceId,
-            symbol: instance.symbol,
-            type: "entry-rejected",
-            subType: `trend-filter-${entryCount + 1}`,
-            price,
-            timestamp,
-            status: "canceled",
-            metadata: { trend },
-          });
-          return;
-        }
-
-        const remainingBalance = instance.financials.availableBalance;
-        let allocationPercent = 0;
-        let entryType = "";
-
-        if (entryCount === 1) {
-          allocationPercent = secondEntryPercent;
-          entryType = "second";
-        } else if (entryCount === 2) {
-          allocationPercent = thirdEntryPercent;
-          entryType = "third";
-        }
-
-        const optimalEntry = await this._calculateOptimalContractQuantity(
-          allocationPercent,
-          remainingBalance,
-          currentPrice,
-          leverage,
-          instrumentInfo
-        );
-
-        const positionId = currentPosition.positionId;
-
-        const signal = await this.createSignalInDatabase({
-          instanceId,
-          symbol: currentPosition.symbol,
-          type: "entry",
-          subType: entryType,
-          price,
-          allocation: optimalEntry.actualAllocationPercent / 100,
-          amount: optimalEntry.actualMargin,
-          timestamp,
-          status: "pending",
-          positionId: positionId,
-          metadata: {
-            trend,
-            theoreticalAllocation: allocationPercent / 100,
-            theoreticalQuantity: optimalEntry.theoreticalQuantity,
-            adjustedQuantity: optimalEntry.adjustedQuantity,
-          },
-        });
-
-        try {
-          await accountService.lockFundsForPosition(
-            instanceId,
-            optimalEntry.actualMargin,
-            signal._id
-          );
-
-          if (instance.bybitConfig && instance.bybitConfig.apiKey) {
-            try {
-              const orderResult = await bybitService.openPosition(
-                instance.bybitConfig.apiKey,
-                instance.bybitConfig.apiSecret,
-                instance.symbol,
-                "Buy",
-                optimalEntry.adjustedQuantity.toString(),
-                0,
-                instance.bybitConfig.subaccountId
-              );
-
-              TradingLogger.logBybitSuccess(
-                instanceId,
-                instance.symbol,
-                `${entryType} order placed`,
-                `ID: ${orderResult.result?.orderId}`
-              );
-
-              signal.metadata.bybitOrderId = orderResult.result?.orderId;
-              signal.metadata.bybitOrderLinkId =
-                orderResult.result?.orderLinkId;
-              signal.metadata.contractQuantity = optimalEntry.adjustedQuantity;
-              await signal.save();
-            } catch (error) {
-              TradingLogger.logBybitError(
-                instanceId,
-                instance.symbol,
-                `${entryType} order placement`,
-                error.message
-              );
-            }
-          }
-
-          currentPosition.entries.push({
-            time: timestamp,
-            price,
-            type,
-            trend,
             allocation: optimalEntry.actualAllocationPercent / 100,
             amount: optimalEntry.actualMargin,
-            signalId: signal._id.toString(),
-            contractQuantity: optimalEntry.adjustedQuantity,
+            timestamp,
+            status: "pending",
             positionId: positionId,
-          });
-
-          currentPosition.capitalAllocation +=
-            optimalEntry.actualAllocationPercent / 100;
-          currentPosition.capitalAmount += optimalEntry.actualMargin;
-          this.lastEntryTimes.set(instanceId, timestamp);
-
-          // GŁÓWNY LOG WEJŚCIA
-          TradingLogger.logEntry(
-            instanceId,
-            instance.symbol,
-            price,
-            `${entryType} entry`,
-            trend,
-            optimalEntry.actualAllocationPercent / 100,
-            optimalEntry.actualMargin,
-            optimalEntry.adjustedQuantity
-          );
-
-          this.emit("positionUpdated", currentPosition);
-        } catch (error) {
-          TradingLogger.logTradingError(
-            instanceId,
-            instance.symbol,
-            error.message,
-            `${entryType} entry lock funds failed`
-          );
-          await Signal.findByIdAndUpdate(signal._id, {
-            status: "canceled",
             metadata: {
-              cancelReason: `Nie udało się zablokować środków: ${error.message}`,
+              trend,
+              positionId,
+              theoreticalAllocation: firstEntryPercent / 100,
+              theoreticalQuantity: optimalEntry.theoreticalQuantity,
+              adjustedQuantity: optimalEntry.adjustedQuantity,
             },
           });
+
+          try {
+            await accountService.lockFundsForPosition(
+              instanceId,
+              optimalEntry.actualMargin,
+              signal._id
+            );
+
+            if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+              try {
+                await bybitService.setLeverage(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  leverage
+                );
+                await bybitService.setMarginMode(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  instance.bybitConfig.marginMode === "isolated" ? 1 : 0
+                );
+
+                const orderResult = await bybitService.openPosition(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  "Buy",
+                  optimalEntry.adjustedQuantity.toString(),
+                  0,
+                  instance.bybitConfig.subaccountId
+                );
+
+                TradingLogger.logBybitSuccess(
+                  instanceId,
+                  instance.symbol,
+                  "Order placed",
+                  `ID: ${orderResult.result?.orderId}`
+                );
+
+                signal.metadata.bybitOrderId = orderResult.result?.orderId;
+                signal.metadata.bybitOrderLinkId =
+                  orderResult.result?.orderLinkId;
+                signal.metadata.contractQuantity =
+                  optimalEntry.adjustedQuantity;
+                await signal.save();
+              } catch (error) {
+                TradingLogger.logBybitError(
+                  instanceId,
+                  instance.symbol,
+                  "Order placement",
+                  error.message
+                );
+              }
+            }
+
+            const newPosition = {
+              instanceId,
+              symbol: instance.symbol,
+              positionId: positionId,
+              entryTime: timestamp,
+              entryPrice: price,
+              capitalAllocation: optimalEntry.actualAllocationPercent / 100,
+              capitalAmount: optimalEntry.actualMargin,
+              status: "active",
+              entries: [
+                {
+                  time: timestamp,
+                  price,
+                  type,
+                  trend,
+                  allocation: optimalEntry.actualAllocationPercent / 100,
+                  amount: optimalEntry.actualMargin,
+                  signalId: signal._id.toString(),
+                  contractQuantity: optimalEntry.adjustedQuantity,
+                  positionId: positionId,
+                },
+              ],
+              history: [],
+            };
+
+            this.activePositions.set(instanceId, newPosition);
+            this.lastEntryTimes.set(instanceId, timestamp);
+
+            await this._atomicStateReset(instanceId);
+
+            TradingLogger.logEntry(
+              instanceId,
+              instance.symbol,
+              price,
+              "First entry",
+              trend,
+              optimalEntry.actualAllocationPercent / 100,
+              optimalEntry.actualMargin,
+              optimalEntry.adjustedQuantity
+            );
+
+            this.emit("newPosition", newPosition);
+          } catch (error) {
+            TradingLogger.logTradingError(
+              instanceId,
+              instance.symbol,
+              error.message,
+              "Lock funds failed"
+            );
+            await Signal.findByIdAndUpdate(signal._id, {
+              status: "canceled",
+              metadata: {
+                cancelReason: `Nie udało się zablokować środków: ${error.message}`,
+              },
+            });
+          }
+        } else if (currentPosition.status === "active") {
+          const entryCount = currentPosition.entries.length;
+
+          if (entryCount >= 3) {
+            const rejectionKey = `${instanceId}-max-entries`;
+            this.lastRejectionLogs.set(
+              rejectionKey,
+              TradingLogger.logSignalRejected(
+                instanceId,
+                instance.symbol,
+                "Max 3 entries reached",
+                this.lastRejectionLogs.get(rejectionKey)
+              )
+            );
+            return;
+          }
+
+          const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
+          if (timestamp - lastEntryTime < minEntryTimeGap) {
+            const rejectionKey = `${instanceId}-time-gap`;
+            this.lastRejectionLogs.set(
+              rejectionKey,
+              TradingLogger.logSignalRejected(
+                instanceId,
+                instance.symbol,
+                `Too soon: ${((timestamp - lastEntryTime) / 60000).toFixed(1)}min < ${minEntryTimeGap / 60000}min`,
+                this.lastRejectionLogs.get(rejectionKey)
+              )
+            );
+            return;
+          }
+
+          const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
+          if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
+            const rejectionKey = `${instanceId}-trend-${entryCount + 1}`;
+            this.lastRejectionLogs.set(
+              rejectionKey,
+              TradingLogger.logSignalRejected(
+                instanceId,
+                instance.symbol,
+                `Bad trend for entry ${entryCount + 1}: ${trend}`,
+                this.lastRejectionLogs.get(rejectionKey)
+              )
+            );
+
+            await this.createSignalInDatabase({
+              instanceId,
+              symbol: instance.symbol,
+              type: "entry-rejected",
+              subType: `trend-filter-${entryCount + 1}`,
+              price,
+              timestamp,
+              status: "canceled",
+              metadata: { trend },
+            });
+            return;
+          }
+
+          const remainingBalance = instance.financials.availableBalance;
+          let allocationPercent = 0;
+          let entryType = "";
+
+          if (entryCount === 1) {
+            allocationPercent = secondEntryPercent;
+            entryType = "second";
+          } else if (entryCount === 2) {
+            allocationPercent = thirdEntryPercent;
+            entryType = "third";
+          }
+
+          const optimalEntry = await this._calculateOptimalContractQuantity(
+            allocationPercent,
+            remainingBalance,
+            currentPrice,
+            leverage,
+            instrumentInfo
+          );
+
+          const positionId = currentPosition.positionId;
+
+          const signal = await this.createSignalInDatabase({
+            instanceId,
+            symbol: currentPosition.symbol,
+            type: "entry",
+            subType: entryType,
+            price,
+            allocation: optimalEntry.actualAllocationPercent / 100,
+            amount: optimalEntry.actualMargin,
+            timestamp,
+            status: "pending",
+            positionId: positionId,
+            metadata: {
+              trend,
+              theoreticalAllocation: allocationPercent / 100,
+              theoreticalQuantity: optimalEntry.theoreticalQuantity,
+              adjustedQuantity: optimalEntry.adjustedQuantity,
+            },
+          });
+
+          try {
+            await accountService.lockFundsForPosition(
+              instanceId,
+              optimalEntry.actualMargin,
+              signal._id
+            );
+
+            if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+              try {
+                const orderResult = await bybitService.openPosition(
+                  instance.bybitConfig.apiKey,
+                  instance.bybitConfig.apiSecret,
+                  instance.symbol,
+                  "Buy",
+                  optimalEntry.adjustedQuantity.toString(),
+                  0,
+                  instance.bybitConfig.subaccountId
+                );
+
+                TradingLogger.logBybitSuccess(
+                  instanceId,
+                  instance.symbol,
+                  `${entryType} order placed`,
+                  `ID: ${orderResult.result?.orderId}`
+                );
+
+                signal.metadata.bybitOrderId = orderResult.result?.orderId;
+                signal.metadata.bybitOrderLinkId =
+                  orderResult.result?.orderLinkId;
+                signal.metadata.contractQuantity =
+                  optimalEntry.adjustedQuantity;
+                await signal.save();
+              } catch (error) {
+                TradingLogger.logBybitError(
+                  instanceId,
+                  instance.symbol,
+                  `${entryType} order placement`,
+                  error.message
+                );
+              }
+            }
+
+            currentPosition.entries.push({
+              time: timestamp,
+              price,
+              type,
+              trend,
+              allocation: optimalEntry.actualAllocationPercent / 100,
+              amount: optimalEntry.actualMargin,
+              signalId: signal._id.toString(),
+              contractQuantity: optimalEntry.adjustedQuantity,
+              positionId: positionId,
+            });
+
+            currentPosition.capitalAllocation +=
+              optimalEntry.actualAllocationPercent / 100;
+            currentPosition.capitalAmount += optimalEntry.actualMargin;
+            this.lastEntryTimes.set(instanceId, timestamp);
+
+            TradingLogger.logEntry(
+              instanceId,
+              instance.symbol,
+              price,
+              `${entryType} entry`,
+              trend,
+              optimalEntry.actualAllocationPercent / 100,
+              optimalEntry.actualMargin,
+              optimalEntry.adjustedQuantity
+            );
+
+            this.emit("positionUpdated", currentPosition);
+          } catch (error) {
+            TradingLogger.logTradingError(
+              instanceId,
+              instance.symbol,
+              error.message,
+              `${entryType} entry lock funds failed`
+            );
+            await Signal.findByIdAndUpdate(signal._id, {
+              status: "canceled",
+              metadata: {
+                cancelReason: `Nie udało się zablokować środków: ${error.message}`,
+              },
+            });
+          }
         }
+      } catch (error) {
+        logger.error(
+          `Błąd podczas przetwarzania sygnału wejścia: ${error.message}`
+        );
       }
-    } catch (error) {
-      logger.error(
-        `Błąd podczas przetwarzania sygnału wejścia: ${error.message}`
-      );
-    }
+    });
+  }
+
+  async _atomicStateReset(instanceId) {
+    return mutex.withLock(`state-reset-${instanceId}`, async () => {
+      try {
+        const analysisService = require("./analysis.service");
+        await analysisService.resetUpperBandState(instanceId);
+        await analysisService.resetTrailingStopTracking(instanceId);
+      } catch (error) {
+        logger.error(`Error in atomic state reset: ${error.message}`);
+      }
+    });
   }
 
   _isTrendValidForEntry(trend) {
@@ -512,270 +525,266 @@ class SignalService extends EventEmitter {
   }
 
   async processExitSignal(signalData) {
-    try {
-      const { instanceId, type, price, timestamp, positionId } = signalData;
-      const currentPosition = this.activePositions.get(instanceId);
-
-      if (!currentPosition || currentPosition.status !== "active") {
-        return; // Cicho ignoruj jeśli brak pozycji
-      }
-
-      const entryCount = currentPosition.entries.length;
-      if (entryCount === 1) {
-        const instanceForTimeCheck = await Instance.findOne({ instanceId });
-        if (instanceForTimeCheck) {
-          const minFirstEntryDuration =
-            instanceForTimeCheck.strategy.parameters.signals
-              ?.minFirstEntryDuration || 60 * 60 * 1000;
-          const positionDuration = timestamp - currentPosition.entryTime;
-
-          if (positionDuration < minFirstEntryDuration) {
-            // Loguj tylko raz na 5 minut
-            const rejectionKey = `${instanceId}-too-fresh`;
-            this.lastRejectionLogs.set(
-              rejectionKey,
-              TradingLogger.logSignalRejected(
-                instanceId,
-                currentPosition.symbol,
-                `First entry too fresh: ${(positionDuration / 60000).toFixed(1)}min < ${minFirstEntryDuration / 60000}min`,
-                this.lastRejectionLogs.get(rejectionKey)
-              )
-            );
-            return;
-          }
-        }
-      }
-
-      const entryAvgPrice = this.calculateAverageEntryPrice(currentPosition);
-      const profitPercent = (price / entryAvgPrice - 1) * 100;
-
-      let totalEntryAmount = 0;
-      for (const entry of currentPosition.entries) {
-        totalEntryAmount += entry.amount;
-      }
-
-      const exitAmount = totalEntryAmount * (1 + profitPercent / 100);
-      const profit = exitAmount - totalEntryAmount;
-
-      const exitSignal = await this.createSignalInDatabase({
-        instanceId,
-        symbol: currentPosition.symbol,
-        type: "exit",
-        subType: type,
-        price,
-        profitPercent,
-        exitAmount,
-        profit,
-        timestamp,
-        status: "pending",
-        positionId: currentPosition.positionId,
-        metadata: {
-          entryAvgPrice,
-          totalEntryAmount,
-          entriesFromMemory: currentPosition.entries.length,
-          ...(type === "trailingStop" && signalData.highestPrice
-            ? {
-                highestPrice: signalData.highestPrice,
-                dropPercent: signalData.dropPercent,
-                trailingStopPercent: signalData.trailingStopPercent,
-              }
-            : {}),
-          // ✅ NOWE - Obsługa upperBandReturn
-          ...(type === "upperBandReturn" && signalData.metadata
-            ? {
-                exitReason: signalData.metadata.exitReason,
-                totalCycleTime: signalData.metadata.totalCycleTime,
-                returnTrigger: signalData.metadata.returnTrigger,
-                finalPrice: signalData.metadata.finalPrice,
-              }
-            : {}),
-        },
-      });
-
-      const firstEntrySignalId = currentPosition.entries[0]?.signalId;
-
+    return mutex.withLock(`exit-${signalData.instanceId}`, async () => {
       try {
-        await accountService.finalizePosition(
-          instanceId,
-          firstEntrySignalId,
-          exitSignal._id,
-          totalEntryAmount,
-          exitAmount
-        );
-        const instanceForExit = await Instance.findOne({ instanceId });
+        const { instanceId, type, price, timestamp, positionId } = signalData;
+        const currentPosition = this.activePositions.get(instanceId);
 
-        if (
-          instanceForExit &&
-          instanceForExit.bybitConfig &&
-          instanceForExit.bybitConfig.apiKey
-        ) {
-          try {
-            let totalContractQuantity = 0;
+        if (!currentPosition || currentPosition.status !== "active") {
+          return;
+        }
 
-            for (const entry of currentPosition.entries) {
-              if (entry.contractQuantity) {
-                totalContractQuantity += parseFloat(entry.contractQuantity);
-              }
+        const entryCount = currentPosition.entries.length;
+        if (entryCount === 1) {
+          const instanceForTimeCheck = await Instance.findOne({ instanceId });
+          if (instanceForTimeCheck) {
+            const minFirstEntryDuration =
+              instanceForTimeCheck.strategy.parameters.signals
+                ?.minFirstEntryDuration || 60 * 60 * 1000;
+            const positionDuration = timestamp - currentPosition.entryTime;
+
+            if (positionDuration < minFirstEntryDuration) {
+              const rejectionKey = `${instanceId}-too-fresh`;
+              this.lastRejectionLogs.set(
+                rejectionKey,
+                TradingLogger.logSignalRejected(
+                  instanceId,
+                  currentPosition.symbol,
+                  `First entry too fresh: ${(positionDuration / 60000).toFixed(1)}min < ${minFirstEntryDuration / 60000}min`,
+                  this.lastRejectionLogs.get(rejectionKey)
+                )
+              );
+              return;
             }
-
-            if (totalContractQuantity === 0) {
-              const allEntrySignals = await Signal.find({
-                instanceId,
-                type: "entry",
-                status: "executed",
-                timestamp: {
-                  $gte: currentPosition.entryTime - 24 * 60 * 60 * 1000,
-                  $lte: timestamp,
-                },
-              }).sort({ timestamp: 1 });
-
-              for (const signal of allEntrySignals) {
-                const contractQty = signal.metadata?.contractQuantity || 0;
-                if (contractQty > 0) {
-                  totalContractQuantity += parseFloat(contractQty);
-                }
-              }
-            }
-
-            if (totalContractQuantity === 0) {
-              try {
-                const positionSize = await bybitService.getPositionSize(
-                  instanceForExit.bybitConfig.apiKey,
-                  instanceForExit.bybitConfig.apiSecret,
-                  instanceForExit.symbol,
-                  instanceForExit.bybitConfig.subaccountId
-                );
-                totalContractQuantity = positionSize;
-              } catch (apiError) {
-                const currentPrice = await bybitService.getCurrentPrice(
-                  instanceForExit.symbol
-                );
-                const positionValue =
-                  totalEntryAmount * instanceForExit.bybitConfig.leverage;
-                const instrumentInfo =
-                  await bybitService.getCachedInstrumentInfo(
-                    instanceForExit.symbol
-                  );
-                const theoreticalQuantity = positionValue / currentPrice;
-                totalContractQuantity = await this._adjustContractQuantity(
-                  theoreticalQuantity,
-                  instrumentInfo
-                );
-              }
-            }
-
-            const orderResult = await bybitService.closePosition(
-              instanceForExit.bybitConfig.apiKey,
-              instanceForExit.bybitConfig.apiSecret,
-              instanceForExit.symbol,
-              "Buy",
-              totalContractQuantity.toString(),
-              0,
-              instanceForExit.bybitConfig.subaccountId
-            );
-
-            TradingLogger.logBybitSuccess(
-              instanceId,
-              instanceForExit.symbol,
-              "Position closed",
-              `Contract: ${totalContractQuantity}`
-            );
-
-            exitSignal.metadata.bybitOrderId = orderResult.result?.orderId;
-            exitSignal.metadata.bybitOrderLinkId =
-              orderResult.result?.orderLinkId;
-            exitSignal.metadata.contractQuantity = totalContractQuantity;
-            await exitSignal.save();
-          } catch (error) {
-            TradingLogger.logBybitError(
-              instanceId,
-              instanceForExit.symbol,
-              "Position close",
-              error.message
-            );
           }
         }
 
-        currentPosition.exitTime = timestamp;
-        currentPosition.exitPrice = price;
-        currentPosition.exitType = type;
-        currentPosition.profitPercent = profitPercent;
-        currentPosition.exitAmount = exitAmount;
-        currentPosition.profit = profit;
-        currentPosition.status = "closed";
-        currentPosition.exitSignalId = exitSignal._id;
+        const entryAvgPrice = this.calculateAverageEntryPrice(currentPosition);
+        const profitPercent = (price / entryAvgPrice - 1) * 100;
 
-        if (!this.positionHistory.has(instanceId)) {
-          this.positionHistory.set(instanceId, []);
+        let totalEntryAmount = 0;
+        for (const entry of currentPosition.entries) {
+          totalEntryAmount += entry.amount;
         }
 
-        this.positionHistory.get(instanceId).push({ ...currentPosition });
+        const exitAmount = totalEntryAmount * (1 + profitPercent / 100);
+        const profit = exitAmount - totalEntryAmount;
 
-        // ✅ NOWE - Reset stanu górnej bandy po zamknięciu pozycji
-        const analysisService = require("./analysis.service");
-        analysisService.resetUpperBandState(instanceId);
-
-        this.activePositions.delete(instanceId);
-        this.lastEntryTimes.delete(instanceId);
-
-        // GŁÓWNY LOG WYJŚCIA
-        const duration = timestamp - currentPosition.entryTime;
-        TradingLogger.logExit(
+        const exitSignal = await this.createSignalInDatabase({
           instanceId,
-          currentPosition.symbol,
+          symbol: currentPosition.symbol,
+          type: "exit",
+          subType: type,
           price,
-          type,
           profitPercent,
+          exitAmount,
           profit,
-          duration
-        );
-
-        this.emit("positionClosed", currentPosition);
-
-        // Synchronizacja salda po zamknięciu pozycji
-        const instanceForSync = await Instance.findOne({ instanceId });
-        if (
-          instanceForSync &&
-          instanceForSync.bybitConfig &&
-          instanceForSync.bybitConfig.apiKey &&
-          !instanceForSync.testMode
-        ) {
-          setTimeout(async () => {
-            try {
-              await instanceService.syncInstanceBalance(instanceId);
-            } catch (error) {
-              TradingLogger.logTradingError(
-                instanceId,
-                currentPosition.symbol,
-                error.message,
-                "Balance sync after exit failed"
-              );
-            }
-          }, 2000);
-        }
-
-        return exitSignal;
-      } catch (error) {
-        TradingLogger.logTradingError(
-          instanceId,
-          currentPosition.symbol,
-          error.message,
-          "Position finalize failed"
-        );
-        await Signal.findByIdAndUpdate(exitSignal._id, {
-          status: "canceled",
+          timestamp,
+          status: "pending",
+          positionId: currentPosition.positionId,
           metadata: {
-            cancelReason: `Nie udało się sfinalizować pozycji: ${error.message}`,
+            entryAvgPrice,
+            totalEntryAmount,
+            entriesFromMemory: currentPosition.entries.length,
+            ...(type === "trailingStop" && signalData.highestPrice
+              ? {
+                  highestPrice: signalData.highestPrice,
+                  dropPercent: signalData.dropPercent,
+                  trailingStopPercent: signalData.trailingStopPercent,
+                }
+              : {}),
+            ...(type === "upperBandReturn" && signalData.metadata
+              ? {
+                  exitReason: signalData.metadata.exitReason,
+                  totalCycleTime: signalData.metadata.totalCycleTime,
+                  returnTrigger: signalData.metadata.returnTrigger,
+                  finalPrice: signalData.metadata.finalPrice,
+                }
+              : {}),
           },
         });
+
+        const firstEntrySignalId = currentPosition.entries[0]?.signalId;
+
+        try {
+          await accountService.finalizePosition(
+            instanceId,
+            firstEntrySignalId,
+            exitSignal._id,
+            totalEntryAmount,
+            exitAmount
+          );
+          const instanceForExit = await Instance.findOne({ instanceId });
+
+          if (
+            instanceForExit &&
+            instanceForExit.bybitConfig &&
+            instanceForExit.bybitConfig.apiKey
+          ) {
+            try {
+              let totalContractQuantity = 0;
+
+              for (const entry of currentPosition.entries) {
+                if (entry.contractQuantity) {
+                  totalContractQuantity += parseFloat(entry.contractQuantity);
+                }
+              }
+
+              if (totalContractQuantity === 0) {
+                const allEntrySignals = await Signal.find({
+                  instanceId,
+                  type: "entry",
+                  status: "executed",
+                  timestamp: {
+                    $gte: currentPosition.entryTime - 24 * 60 * 60 * 1000,
+                    $lte: timestamp,
+                  },
+                }).sort({ timestamp: 1 });
+
+                for (const signal of allEntrySignals) {
+                  const contractQty = signal.metadata?.contractQuantity || 0;
+                  if (contractQty > 0) {
+                    totalContractQuantity += parseFloat(contractQty);
+                  }
+                }
+              }
+
+              if (totalContractQuantity === 0) {
+                try {
+                  const positionSize = await bybitService.getPositionSize(
+                    instanceForExit.bybitConfig.apiKey,
+                    instanceForExit.bybitConfig.apiSecret,
+                    instanceForExit.symbol,
+                    instanceForExit.bybitConfig.subaccountId
+                  );
+                  totalContractQuantity = positionSize;
+                } catch (apiError) {
+                  const currentPrice = await bybitService.getCurrentPrice(
+                    instanceForExit.symbol
+                  );
+                  const positionValue =
+                    totalEntryAmount * instanceForExit.bybitConfig.leverage;
+                  const instrumentInfo =
+                    await bybitService.getCachedInstrumentInfo(
+                      instanceForExit.symbol
+                    );
+                  const theoreticalQuantity = positionValue / currentPrice;
+                  totalContractQuantity = await this._adjustContractQuantity(
+                    theoreticalQuantity,
+                    instrumentInfo
+                  );
+                }
+              }
+
+              const orderResult = await bybitService.closePosition(
+                instanceForExit.bybitConfig.apiKey,
+                instanceForExit.bybitConfig.apiSecret,
+                instanceForExit.symbol,
+                "Buy",
+                totalContractQuantity.toString(),
+                0,
+                instanceForExit.bybitConfig.subaccountId
+              );
+
+              TradingLogger.logBybitSuccess(
+                instanceId,
+                instanceForExit.symbol,
+                "Position closed",
+                `Contract: ${totalContractQuantity}`
+              );
+
+              exitSignal.metadata.bybitOrderId = orderResult.result?.orderId;
+              exitSignal.metadata.bybitOrderLinkId =
+                orderResult.result?.orderLinkId;
+              exitSignal.metadata.contractQuantity = totalContractQuantity;
+              await exitSignal.save();
+            } catch (error) {
+              TradingLogger.logBybitError(
+                instanceId,
+                instanceForExit.symbol,
+                "Position close",
+                error.message
+              );
+            }
+          }
+
+          currentPosition.exitTime = timestamp;
+          currentPosition.exitPrice = price;
+          currentPosition.exitType = type;
+          currentPosition.profitPercent = profitPercent;
+          currentPosition.exitAmount = exitAmount;
+          currentPosition.profit = profit;
+          currentPosition.status = "closed";
+          currentPosition.exitSignalId = exitSignal._id;
+
+          if (!this.positionHistory.has(instanceId)) {
+            this.positionHistory.set(instanceId, []);
+          }
+
+          this.positionHistory.get(instanceId).push({ ...currentPosition });
+
+          await this._atomicStateReset(instanceId);
+
+          this.activePositions.delete(instanceId);
+          this.lastEntryTimes.delete(instanceId);
+
+          const duration = timestamp - currentPosition.entryTime;
+          TradingLogger.logExit(
+            instanceId,
+            currentPosition.symbol,
+            price,
+            type,
+            profitPercent,
+            profit,
+            duration
+          );
+
+          this.emit("positionClosed", currentPosition);
+
+          const instanceForSync = await Instance.findOne({ instanceId });
+          if (
+            instanceForSync &&
+            instanceForSync.bybitConfig &&
+            instanceForSync.bybitConfig.apiKey &&
+            !instanceForSync.testMode
+          ) {
+            setTimeout(async () => {
+              try {
+                await instanceService.syncInstanceBalance(instanceId);
+              } catch (error) {
+                TradingLogger.logTradingError(
+                  instanceId,
+                  currentPosition.symbol,
+                  error.message,
+                  "Balance sync after exit failed"
+                );
+              }
+            }, 2000);
+          }
+
+          return exitSignal;
+        } catch (error) {
+          TradingLogger.logTradingError(
+            instanceId,
+            currentPosition.symbol,
+            error.message,
+            "Position finalize failed"
+          );
+          await Signal.findByIdAndUpdate(exitSignal._id, {
+            status: "canceled",
+            metadata: {
+              cancelReason: `Nie udało się sfinalizować pozycji: ${error.message}`,
+            },
+          });
+          throw error;
+        }
+      } catch (error) {
+        logger.error(
+          `Błąd podczas przetwarzania sygnału wyjścia: ${error.message}`
+        );
         throw error;
       }
-    } catch (error) {
-      logger.error(
-        `Błąd podczas przetwarzania sygnału wyjścia: ${error.message}`
-      );
-      throw error;
-    }
+    });
   }
 
   calculateAverageEntryPrice(position) {
@@ -950,4 +959,5 @@ class SignalService extends EventEmitter {
 }
 
 const signalService = new SignalService();
+signalService.setupListeners();
 module.exports = signalService;

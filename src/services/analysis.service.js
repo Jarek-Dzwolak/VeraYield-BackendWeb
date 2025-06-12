@@ -1,12 +1,10 @@
-/**
- * Analysis Service - serwis analizy danych z nową logiką górnej bandy
- */
-
 const {
   HurstChannel,
   ExponentialMovingAverage,
 } = require("../utils/technical");
 const binanceService = require("./binance.service");
+const upperBandStateManager = require("../utils/upper-band-state-manager");
+const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
 const TradingLogger = require("../utils/trading-logger");
 const { EventEmitter } = require("events");
@@ -18,388 +16,31 @@ class AnalysisService extends EventEmitter {
     this.indicators = new Map();
     this.lastPrices = new Map();
     this.highestPrices = new Map();
-    this.extremumReached = new Map(); // Zachowane dla trailing stop
+    this.extremumReached = new Map();
     this.trailingStopActivationTime = new Map();
 
-    // ✅ NOWY STATE MANAGER DLA GÓRNEJ BANDY
-    this.upperBandStates = new Map(); // instanceId -> state object
-    this.upperBandTimers = new Map(); // instanceId -> timer info
-
-    // ✅ THROTTLING - tylko dla dolnej bandy, nie dla górnej bandy
     this.lastSignalEmission = new Map();
-    this.signalThrottleTime = 30000; // 30 sekund tylko dla dolnej bandy
+    this.signalThrottleTime = 30000;
 
     this.setupListeners();
   }
 
-  /**
-   * ✅ NOWA METODA - Inicjalizacja stanu górnej bandy dla instancji
-   */
-  initializeUpperBandState(instanceId) {
-    this.upperBandStates.set(instanceId, {
-      currentState: "waiting_for_exit", // waiting_for_exit | exit_counting | waiting_for_return | return_counting
-      stateStartTime: null,
-      triggerPrice: null,
-      bandLevel: null,
-      resetConditionMet: false,
-      resetStartTime: null,
+  async resetUpperBandState(instanceId) {
+    return upperBandStateManager.forceCleanAllState(instanceId);
+  }
+
+  async resetTrailingStopTracking(instanceId) {
+    return mutex.withLock(`trailing-${instanceId}`, async () => {
+      this.extremumReached.set(instanceId, false);
+      this.highestPrices.delete(instanceId);
+      this.trailingStopActivationTime.delete(instanceId);
+
+      await upperBandStateManager.forceCleanAllState(instanceId);
+      TradingLogger.logUpperBandReset(instanceId, "Trailing stop reset");
     });
-
-    this.upperBandTimers.set(instanceId, {
-      stateTimer: null,
-      resetTimer: null,
-      lastLogTime: 0,
-    });
-
-    TradingLogger.logUpperBandState(
-      instanceId,
-      "initialized",
-      "waiting_for_exit"
-    );
   }
 
-  /**
-   * ✅ NOWA METODA - Reset stanu górnej bandy
-   */
-  resetUpperBandState(instanceId) {
-    if (this.upperBandStates.has(instanceId)) {
-      const timers = this.upperBandTimers.get(instanceId);
-
-      // Wyczyść timery jeśli istnieją
-      if (timers) {
-        if (timers.stateTimer) clearTimeout(timers.stateTimer);
-        if (timers.resetTimer) clearTimeout(timers.resetTimer);
-      }
-
-      // Usuń state
-      this.upperBandStates.delete(instanceId);
-      this.upperBandTimers.delete(instanceId);
-
-      // ✅ NOWY ZWIĘZŁY LOG
-      TradingLogger.logUpperBandReset(instanceId, "Manual reset");
-    }
-  }
-
-  /**
-   * ✅ POPRAWIONA METODA - Aktualizacja stanu górnej bandy TYLKO gdy istnieje pozycja
-   */
-  updateUpperBandState(
-    instanceId,
-    currentPrice,
-    currentHigh,
-    currentLow,
-    hurstResult
-  ) {
-    // ✅ SPRAWDŹ CZY MAMY AKTYWNĄ POZYCJĘ
-    const signalService = require("./signal.service");
-    const activePosition = signalService.getActivePositions(instanceId);
-
-    // ❌ JEŚLI BRAK POZYCJI - NIE ROBIMY NIC Z GÓRNĄ BANDĄ
-    if (!activePosition || activePosition.status !== "active") {
-      // Jeśli był aktywny stan, zresetuj go
-      if (this.upperBandStates.has(instanceId)) {
-        this.resetUpperBandState(instanceId);
-        TradingLogger.logUpperBandState(
-          instanceId,
-          "reset_no_position",
-          "No active position - state cleared"
-        );
-      }
-      return;
-    }
-
-    // ✅ MAMY POZYCJĘ - KONTYNUUJ NORMALNĄ LOGIKĘ
-    if (!this.upperBandStates.has(instanceId)) {
-      this.initializeUpperBandState(instanceId);
-    }
-
-    const state = this.upperBandStates.get(instanceId);
-    const timers = this.upperBandTimers.get(instanceId);
-    const now = Date.now();
-
-    const upperBand = hurstResult.upperBand;
-    const exitTrigger = upperBand * 1.002; // +0.2%
-    const returnTrigger = upperBand * 0.998; // -0.2%
-    const exitResetTrigger = upperBand * 0.9975; // -0.25% (było -0.5%)
-    const returnResetTrigger = upperBand * 1.0025; // +0.25% (było +0.5%)
-
-    // ✅ LOG PROGRESS CO 2 MINUTY
-    if (now - timers.lastLogTime > 120000) {
-      // 2 minuty
-      this.logStateProgress(instanceId, state, currentPrice, upperBand);
-      timers.lastLogTime = now;
-    }
-
-    switch (state.currentState) {
-      case "waiting_for_exit":
-        this.handleWaitingForExit(
-          instanceId,
-          currentPrice,
-          currentHigh,
-          exitTrigger,
-          upperBand,
-          now
-        );
-        break;
-
-      case "exit_counting":
-        this.handleExitCounting(
-          instanceId,
-          currentPrice,
-          currentLow,
-          upperBand,
-          exitResetTrigger,
-          now
-        );
-        break;
-
-      case "waiting_for_return":
-        this.handleWaitingForReturn(
-          instanceId,
-          currentPrice,
-          currentLow,
-          returnTrigger,
-          upperBand,
-          now
-        );
-        break;
-
-      case "return_counting":
-        this.handleReturnCounting(
-          instanceId,
-          currentPrice,
-          currentHigh,
-          upperBand,
-          returnResetTrigger,
-          now
-        );
-        break;
-    }
-  }
-
-  /**
-   * ✅ Stan: Czekanie na wyjście z kanału
-   */
-  handleWaitingForExit(
-    instanceId,
-    currentPrice,
-    currentHigh,
-    exitTrigger,
-    upperBand,
-    now
-  ) {
-    if (currentHigh >= exitTrigger) {
-      const state = this.upperBandStates.get(instanceId);
-      state.currentState = "exit_counting";
-      state.stateStartTime = now;
-      state.triggerPrice = currentPrice;
-      state.bandLevel = upperBand;
-      state.resetConditionMet = false;
-
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "exit_started",
-        `Counting exit (${currentPrice} > ${exitTrigger.toFixed(2)} +0.2%)`
-      );
-    }
-  }
-
-  /**
-   * ✅ Stan: Liczenie wyjścia z kanału (15 minut) - USUNIĘTO timeElapsedMinutes
-   */
-  handleExitCounting(
-    instanceId,
-    currentPrice,
-    currentLow,
-    upperBand,
-    exitResetTrigger,
-    now
-  ) {
-    const state = this.upperBandStates.get(instanceId);
-    const timeElapsed = now - state.stateStartTime;
-
-    // ✅ WARUNEK RESET: -0.5% pod bandą przez 15 minut
-    if (currentLow <= exitResetTrigger) {
-      if (!state.resetConditionMet) {
-        state.resetConditionMet = true;
-        state.resetStartTime = now;
-        TradingLogger.logUpperBandState(
-          instanceId,
-          "exit_reset_warning",
-          `Price ${currentPrice} < ${exitResetTrigger.toFixed(2)} (-0.5%), reset timer started`
-        );
-      } else {
-        const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 15 * 60 * 1000) {
-          // 15 minut
-          // RESET DO POCZĄTKOWEGO STANU
-          state.currentState = "waiting_for_exit";
-          state.stateStartTime = null;
-          state.resetConditionMet = false;
-          TradingLogger.logUpperBandState(
-            instanceId,
-            "exit_reset",
-            "Reset to waiting_for_exit"
-          );
-          return;
-        }
-      }
-    } else if (state.resetConditionMet && currentLow > upperBand) {
-      // Anuluj reset jeśli cena wróci nad bandę
-      state.resetConditionMet = false;
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "exit_reset_cancelled",
-        "Price back above band"
-      );
-    }
-
-    // ✅ SPRAWDŹ CZY MINĘŁO 15 MINUT
-    if (timeElapsed >= 15 * 60 * 1000) {
-      state.currentState = "waiting_for_return";
-      state.stateStartTime = null;
-      state.resetConditionMet = false;
-
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "exit_confirmed",
-        `EXIT CONFIRMED after 15 min. Ready for return signal.`
-      );
-    }
-  }
-
-  /**
-   * ✅ Stan: Czekanie na powrót do kanału
-   */
-  handleWaitingForReturn(
-    instanceId,
-    currentPrice,
-    currentLow,
-    returnTrigger,
-    upperBand,
-    now
-  ) {
-    if (currentLow <= returnTrigger) {
-      const state = this.upperBandStates.get(instanceId);
-      state.currentState = "return_counting";
-      state.stateStartTime = now;
-      state.triggerPrice = currentPrice;
-      state.bandLevel = upperBand;
-      state.resetConditionMet = false;
-
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "return_started",
-        `Counting return (${currentPrice} < ${returnTrigger.toFixed(2)} -0.2%)`
-      );
-    }
-  }
-
-  /**
-   * ✅ Stan: Liczenie powrotu do kanału (15 minut)
-   */
-  handleReturnCounting(
-    instanceId,
-    currentPrice,
-    currentHigh,
-    upperBand,
-    returnResetTrigger,
-    now
-  ) {
-    const state = this.upperBandStates.get(instanceId);
-    const timeElapsed = now - state.stateStartTime;
-
-    // ✅ WARUNEK RESET: +0.5% nad bandą przez 15 minut
-    if (currentHigh >= returnResetTrigger) {
-      if (!state.resetConditionMet) {
-        state.resetConditionMet = true;
-        state.resetStartTime = now;
-        TradingLogger.logUpperBandState(
-          instanceId,
-          "return_reset_warning",
-          `Price ${currentPrice} > ${returnResetTrigger.toFixed(2)} (+0.5%), reset timer started`
-        );
-      } else {
-        const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 15 * 60 * 1000) {
-          // 15 minut
-          // RESET DO OCZEKIWANIA NA POWRÓT
-          state.currentState = "waiting_for_return";
-          state.stateStartTime = null;
-          state.resetConditionMet = false;
-          TradingLogger.logUpperBandState(
-            instanceId,
-            "return_reset",
-            "Reset to waiting_for_return"
-          );
-          return;
-        }
-      }
-    } else if (state.resetConditionMet && currentHigh < upperBand) {
-      // Anuluj reset jeśli cena wróci pod bandę
-      state.resetConditionMet = false;
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "return_reset_cancelled",
-        "Price back below band"
-      );
-    }
-
-    // ✅ SPRAWDŹ CZY MINĘŁO 15 MINUT - ZAMKNIJ POZYCJĘ!
-    if (timeElapsed >= 15 * 60 * 1000) {
-      // WYGENERUJ SYGNAŁ WYJŚCIA
-      this.emit("exitSignal", {
-        instanceId,
-        type: "upperBandReturn",
-        price: currentPrice,
-        hurstChannel: { upperBand },
-        timestamp: now,
-        metadata: {
-          exitReason: "Confirmed return to channel after 15 minutes",
-          totalCycleTime: "30+ minutes",
-          returnTrigger: state.bandLevel * 0.998,
-          finalPrice: currentPrice,
-        },
-      });
-
-      // RESET STANU
-      state.currentState = "waiting_for_exit";
-      state.stateStartTime = null;
-      state.resetConditionMet = false;
-
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "return_confirmed",
-        `POSITION CLOSED - Return confirmed after 15 min`
-      );
-    }
-  }
-
-  /**
-   * ✅ NOWA METODA - Logowanie postępu stanu
-   */
-  logStateProgress(instanceId, state, currentPrice, upperBand) {
-    if (!state.stateStartTime) return;
-
-    const timeElapsed = Date.now() - state.stateStartTime;
-    const minutesElapsed = Math.floor(timeElapsed / 60000);
-    const symbol = this.instances.get(instanceId)?.symbol || "UNKNOWN";
-
-    TradingLogger.logUpperBandProgress(
-      instanceId,
-      symbol,
-      state.currentState,
-      minutesElapsed,
-      currentPrice,
-      upperBand
-    );
-  }
-
-  /**
-   * Konfiguruje nasłuchiwanie zdarzeń z serwisu Binance
-   */
   setupListeners() {
-    // Nasłuchuj zamknięte świece 15-minutowe
     binanceService.on("klineClosed", (data) => {
       const { candle, instanceId, allCandles } = data;
 
@@ -418,7 +59,6 @@ class AnalysisService extends EventEmitter {
       this.lastPrices.set(instanceId, candle.close);
     });
 
-    // Nasłuchuj aktualizacje cen
     binanceService.on("kline", (data) => {
       const { candle, instanceId } = data;
       const currentPrice = candle.close;
@@ -434,7 +74,6 @@ class AnalysisService extends EventEmitter {
         return;
       }
 
-      // Aktualizuj kanał Hursta dla zamkniętych świec 15m
       if (candle.interval === "15m" && candle.isFinal) {
         const config = this.instances.get(instanceId);
         const candles15m = binanceService.getCachedCandles(
@@ -446,7 +85,6 @@ class AnalysisService extends EventEmitter {
         }
       }
 
-      // Aktualizuj EMA dla zamkniętych świec 1h
       if (candle.interval === "1h" && candle.isFinal) {
         const config = this.instances.get(instanceId);
         const candles1h = binanceService.getCachedCandles(config.symbol, "1h");
@@ -460,7 +98,6 @@ class AnalysisService extends EventEmitter {
       this.lastPrices.set(instanceId, currentPrice);
     });
 
-    // Obsługa zdarzeń emitowanych bezpośrednio (dla symulatora)
     this.on("kline", (data) => {
       TradingLogger.logDebugThrottled(
         `simulator-${data.instanceId}`,
@@ -488,9 +125,6 @@ class AnalysisService extends EventEmitter {
     });
   }
 
-  /**
-   * Aktualizuje najwyższą cenę dla instancji (dla trailing stopu) - TYLKO JEŚLI TRAILING STOP WŁĄCZONY
-   */
   updateHighestPrice(instanceId, currentHigh) {
     const config = this.instances.get(instanceId);
     const trailingStopEnabled = config?.signals?.enableTrailingStop === true;
@@ -508,24 +142,7 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * ✅ POPRAWIONA METODA - Resetuje śledzenie trailing stopu i stanu górnej bandy dla instancji
-   */
-  resetTrailingStopTracking(instanceId) {
-    this.extremumReached.set(instanceId, false);
-    this.highestPrices.delete(instanceId);
-    this.trailingStopActivationTime.delete(instanceId);
-
-    // ✅ NOWE - Reset stanu górnej bandy
-    this.resetUpperBandState(instanceId);
-
-    TradingLogger.logUpperBandReset(instanceId, "Trailing stop reset");
-  }
-
-  /**
-   * ✅ ZAKTUALIZOWANA METODA - detectSignals bez previousPrice i z poprawioną logiką trailing stop
-   */
-  detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
+  async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
     try {
       const indicators = this.indicators.get(instanceId);
       if (!indicators || !indicators.hurstResult) {
@@ -543,16 +160,24 @@ class AnalysisService extends EventEmitter {
         shortEmaValue
       );
 
-      // ✅ 1. NOWA LOGIKA GÓRNEJ BANDY - bez throttling + sprawdzanie pozycji
-      this.updateUpperBandState(
+      const getActivePositionFn = (id) => {
+        if (!this._injectedSignalService) return null;
+        return this._injectedSignalService.getActivePositions(id);
+      };
+
+      const exitSignal = await upperBandStateManager.updateState(
         instanceId,
         currentPrice,
         currentHigh,
         currentLow,
-        hurstResult
+        hurstResult,
+        getActivePositionFn
       );
 
-      // ✅ 2. STARA LOGIKA DOLNEJ BANDY - z throttling (zachowane)
+      if (exitSignal) {
+        this.emit("exitSignal", exitSignal);
+      }
+
       let touchesLowerBand = false;
       if (
         currentLow <= hurstResult.lowerBand &&
@@ -598,7 +223,6 @@ class AnalysisService extends EventEmitter {
         }
       }
 
-      // ✅ 3. TRAILING STOP - TYLKO JEŚLI WŁĄCZONY
       const trailingStopEnabled = config?.signals?.enableTrailingStop === true;
 
       if (trailingStopEnabled) {
@@ -670,13 +294,12 @@ class AnalysisService extends EventEmitter {
                   60000
                 );
 
-                this.resetTrailingStopTracking(instanceId);
+                await this.resetTrailingStopTracking(instanceId);
               }
             }
           }
         }
       }
-      // ✅ JEŚLI TRAILING STOP WYŁĄCZONY, SYSTEM NIE ROBI NIC ZWIĄZANEGO Z TRACKING
     } catch (error) {
       logger.error(
         `Błąd podczas wykrywania sygnałów dla instancji ${instanceId}: ${error.message}`
@@ -684,9 +307,6 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Określa aktualny trend na podstawie EMA
-   */
   determineTrend(currentPrice, emaValue, shortEmaValue) {
     if (!emaValue || !shortEmaValue) {
       return "neutral";
@@ -709,9 +329,10 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Inicjalizuje nową instancję analizy
-   */
+  setSignalService(signalService) {
+    this._injectedSignalService = signalService;
+  }
+
   async initializeInstance(instanceId, config) {
     try {
       if (this.instances.has(instanceId)) {
@@ -749,9 +370,6 @@ class AnalysisService extends EventEmitter {
       this.indicators.set(instanceId, { hurstChannel, ema, shortEma });
       this.extremumReached.set(instanceId, false);
 
-      // ✅ INICJALIZACJA NOWEGO STANU GÓRNEJ BANDY - ALE TYLKO JEŚLI MAMY POZYCJĘ
-      // (nie robimy tego tutaj automatycznie, zostanie zainicjalizowane przy pierwszym sprawdzeniu pozycji)
-
       this.updateInitialIndicators(instanceId);
 
       logger.info(
@@ -766,10 +384,7 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Zatrzymuje analizę dla instancji
-   */
-  stopInstance(instanceId) {
+  async stopInstance(instanceId) {
     try {
       if (!this.instances.has(instanceId)) {
         logger.warn(
@@ -789,7 +404,6 @@ class AnalysisService extends EventEmitter {
         );
       });
 
-      // Wyczyść throttling dla dolnej bandy
       for (const [key, value] of this.lastSignalEmission.entries()) {
         if (
           key.startsWith(`${instanceId}-lowerBandTouch`) ||
@@ -799,8 +413,7 @@ class AnalysisService extends EventEmitter {
         }
       }
 
-      // ✅ WYCZYŚĆ NOWY STAN GÓRNEJ BANDY
-      this.resetUpperBandState(instanceId);
+      await upperBandStateManager.forceCleanAllState(instanceId);
 
       this.instances.delete(instanceId);
       this.indicators.delete(instanceId);
@@ -819,9 +432,6 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Zatrzymuje wszystkie instancje analizy
-   */
   stopAllInstances() {
     const instanceIds = [...this.instances.keys()];
     for (const instanceId of instanceIds) {
@@ -830,9 +440,6 @@ class AnalysisService extends EventEmitter {
     logger.info("Zatrzymano wszystkie instancje analizy");
   }
 
-  /**
-   * Oblicza początkowe wartości wskaźników
-   */
   updateInitialIndicators(instanceId) {
     const config = this.instances.get(instanceId);
     const candles15m = binanceService.getCachedCandles(config.symbol, "15m");
@@ -847,9 +454,6 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Aktualizuje kanał Hursta dla instancji
-   */
   updateHurstChannel(instanceId, candles) {
     try {
       const indicators = this.indicators.get(instanceId);
@@ -878,9 +482,6 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Aktualizuje EMA dla instancji
-   */
   updateEMA(instanceId, candles) {
     try {
       const indicators = this.indicators.get(instanceId);
@@ -913,9 +514,6 @@ class AnalysisService extends EventEmitter {
     }
   }
 
-  /**
-   * Pobiera aktualny stan analizy dla instancji
-   */
   getInstanceAnalysisState(instanceId) {
     if (!this.instances.has(instanceId) || !this.indicators.has(instanceId)) {
       return null;
@@ -923,7 +521,7 @@ class AnalysisService extends EventEmitter {
 
     const config = this.instances.get(instanceId);
     const indicators = this.indicators.get(instanceId);
-    const upperBandState = this.upperBandStates.get(instanceId);
+    const upperBandState = upperBandStateManager.getState(instanceId);
 
     return {
       symbol: config.symbol,
@@ -933,12 +531,11 @@ class AnalysisService extends EventEmitter {
       lastPrice: this.lastPrices.get(instanceId) || null,
       isExtremumReached: this.extremumReached.get(instanceId) || false,
       highestPrice: this.highestPrices.get(instanceId) || null,
-      upperBandState: upperBandState || null, // ✅ NOWY STAN
+      upperBandState: upperBandState || null,
       timestamp: new Date().getTime(),
     };
   }
 }
 
-// Eksportuj singleton
 const analysisService = new AnalysisService();
 module.exports = analysisService;

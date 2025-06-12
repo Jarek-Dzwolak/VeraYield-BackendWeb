@@ -1,6 +1,7 @@
 const Instance = require("../models/instance.model");
 const analysisService = require("./analysis.service");
 const signalService = require("./signal.service");
+const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
 const TradingLogger = require("../utils/trading-logger");
 const { v4: uuidv4 } = require("uuid");
@@ -19,7 +20,6 @@ class InstanceService {
       for (const instance of instances) {
         await this.startInstance(instance.instanceId);
 
-        // Odtwórz aktywne pozycje w pamięci
         if (
           instance.financials &&
           instance.financials.openPositions &&
@@ -79,305 +79,311 @@ class InstanceService {
   }
 
   async createInstance(config) {
-    try {
-      const instanceId = config.instanceId || uuidv4();
-      const existingInstance = await Instance.findOne({ instanceId });
+    return mutex.withLock(`create-${config.name}`, async () => {
+      try {
+        const instanceId = config.instanceId || uuidv4();
+        const existingInstance = await Instance.findOne({ instanceId });
 
-      if (existingInstance) {
-        throw new Error(`Instancja o ID ${instanceId} już istnieje`);
-      }
+        if (existingInstance) {
+          throw new Error(`Instancja o ID ${instanceId} już istnieje`);
+        }
 
-      // Dekoduj klucze API jeśli są zakodowane Base64
-      if (config.bybitConfig) {
-        config.bybitConfig = this._decodeApiKeys(config.bybitConfig);
-      }
+        if (config.bybitConfig) {
+          config.bybitConfig = this._decodeApiKeys(config.bybitConfig);
+        }
 
-      const instance = new Instance({
-        instanceId,
-        name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
-        symbol: config.symbol,
-        active: config.active !== false,
-        testMode: config.testMode || false,
-        strategy: {
-          type: config.strategy?.type || "hurst",
-          parameters: config.strategy?.parameters || {
-            hurst: {
-              interval: "15m",
-              periods: 25,
-              upperDeviationFactor: 2.0,
-              lowerDeviationFactor: 2.0,
-            },
-            ema: { interval: "1h", periods: 30 },
-            signals: {
-              checkEMATrend: true,
-              minEntryTimeGap: 7200000,
-              enableTrailingStop: true,
-              trailingStop: 0.02,
-              trailingStopDelay: 300000,
-              minFirstEntryDuration: 3600000,
-            },
-            capitalAllocation: {
-              firstEntry: 0.1,
-              secondEntry: 0.25,
-              thirdEntry: 0.5,
+        const instance = new Instance({
+          instanceId,
+          name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
+          symbol: config.symbol,
+          active: config.active !== false,
+          testMode: config.testMode || false,
+          strategy: {
+            type: config.strategy?.type || "hurst",
+            parameters: config.strategy?.parameters || {
+              hurst: {
+                interval: "15m",
+                periods: 25,
+                upperDeviationFactor: 2.0,
+                lowerDeviationFactor: 2.0,
+              },
+              ema: { interval: "1h", periods: 30 },
+              signals: {
+                checkEMATrend: true,
+                minEntryTimeGap: 7200000,
+                enableTrailingStop: true,
+                trailingStop: 0.02,
+                trailingStopDelay: 300000,
+                minFirstEntryDuration: 3600000,
+              },
+              capitalAllocation: {
+                firstEntry: 0.1,
+                secondEntry: 0.25,
+                thirdEntry: 0.5,
+              },
             },
           },
-        },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
 
-      // Inicjalizuj dane finansowe
-      const initialFunds = config.initialFunds || 0;
-      instance.financials = {
-        allocatedCapital: initialFunds,
-        currentBalance: initialFunds,
-        availableBalance: initialFunds,
-        lockedBalance: 0,
-        totalProfit: 0,
-        userId: config.userId || "000000000000000000000000",
-        openPositions: [],
-        closedPositions: [],
-      };
+        const initialFunds = config.initialFunds || 0;
+        instance.financials = {
+          allocatedCapital: initialFunds,
+          currentBalance: initialFunds,
+          availableBalance: initialFunds,
+          lockedBalance: 0,
+          totalProfit: 0,
+          userId: config.userId || "000000000000000000000000",
+          openPositions: [],
+          closedPositions: [],
+        };
 
-      if (config.bybitConfig) {
-        instance.bybitConfig = config.bybitConfig;
+        if (config.bybitConfig) {
+          instance.bybitConfig = config.bybitConfig;
+        }
+
+        await instance.save();
+
+        if (instance.active) {
+          await this.startInstance(instanceId);
+        }
+
+        if (instance.bybitConfig?.apiKey && !instance.testMode) {
+          setTimeout(async () => {
+            try {
+              await this.syncInstanceBalance(instanceId);
+              TradingLogger.logInstanceState(
+                instanceId,
+                "Auto balance sync completed"
+              );
+            } catch (error) {
+              TradingLogger.logTradingError(
+                instanceId,
+                instance.symbol,
+                error.message,
+                "Auto balance sync failed"
+              );
+            }
+          }, 3000);
+        }
+
+        TradingLogger.logInstanceState(
+          instanceId,
+          "Created",
+          `${instance.name} (${instance.symbol})`
+        );
+        return instance;
+      } catch (error) {
+        logger.error(`Błąd podczas tworzenia instancji: ${error.message}`);
+        throw error;
       }
-
-      await instance.save();
-
-      if (instance.active) {
-        await this.startInstance(instanceId);
-      }
-
-      // Automatyczna synchronizacja salda dla nowych instancji z API ByBit
-      if (instance.bybitConfig?.apiKey && !instance.testMode) {
-        setTimeout(async () => {
-          try {
-            await this.syncInstanceBalance(instanceId);
-            TradingLogger.logInstanceState(
-              instanceId,
-              "Auto balance sync completed"
-            );
-          } catch (error) {
-            TradingLogger.logTradingError(
-              instanceId,
-              instance.symbol,
-              error.message,
-              "Auto balance sync failed"
-            );
-          }
-        }, 3000);
-      }
-
-      TradingLogger.logInstanceState(
-        instanceId,
-        "Created",
-        `${instance.name} (${instance.symbol})`
-      );
-      return instance;
-    } catch (error) {
-      logger.error(`Błąd podczas tworzenia instancji: ${error.message}`);
-      throw error;
-    }
+    });
   }
 
   async startInstance(instanceId) {
-    try {
-      const instance = await Instance.findOne({ instanceId });
-      if (!instance) {
-        throw new Error(`Instancja ${instanceId} nie istnieje`);
-      }
+    return mutex.withLock(`start-${instanceId}`, async () => {
+      try {
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          throw new Error(`Instancja ${instanceId} nie istnieje`);
+        }
 
-      if (this.instances.has(instanceId)) {
-        return true; // Już uruchomiona
-      }
+        if (this.instances.has(instanceId)) {
+          return true;
+        }
 
-      // Synchronizuj saldo z ByBit przy uruchomieniu
-      if (
-        instance.bybitConfig &&
-        instance.bybitConfig.apiKey &&
-        !instance.testMode
-      ) {
-        await this.syncInstanceBalance(instanceId);
-      }
+        if (
+          instance.bybitConfig &&
+          instance.bybitConfig.apiKey &&
+          !instance.testMode
+        ) {
+          await this.syncInstanceBalance(instanceId);
+        }
 
-      const analysisConfig = {
-        symbol: instance.symbol,
-        hurst: instance.strategy.parameters.hurst,
-        ema: instance.strategy.parameters.ema,
-        checkEMATrend: instance.strategy.parameters.signals.checkEMATrend,
-        signals: instance.strategy.parameters.signals,
-      };
+        const analysisConfig = {
+          symbol: instance.symbol,
+          hurst: instance.strategy.parameters.hurst,
+          ema: instance.strategy.parameters.ema,
+          checkEMATrend: instance.strategy.parameters.signals.checkEMATrend,
+          signals: instance.strategy.parameters.signals,
+        };
 
-      const analysisSuccess = await analysisService.initializeInstance(
-        instanceId,
-        analysisConfig
-      );
-      if (!analysisSuccess) {
-        throw new Error(
-          `Nie udało się zainicjalizować analizy dla instancji ${instanceId}`
+        const analysisSuccess = await analysisService.initializeInstance(
+          instanceId,
+          analysisConfig
         );
+        if (!analysisSuccess) {
+          throw new Error(
+            `Nie udało się zainicjalizować analizy dla instancji ${instanceId}`
+          );
+        }
+
+        await analysisService.resetUpperBandState(instanceId);
+
+        this.instances.set(instanceId, {
+          ...instance.toObject(),
+          lastStarted: new Date(),
+        });
+
+        instance.active = true;
+        instance.updatedAt = new Date();
+        await instance.save();
+
+        TradingLogger.logInstanceState(
+          instanceId,
+          "Started",
+          `${instance.name} (${instance.symbol})`
+        );
+        return true;
+      } catch (error) {
+        TradingLogger.logTradingError(
+          instanceId,
+          "UNKNOWN",
+          error.message,
+          "Start failed"
+        );
+        return false;
       }
-      // ✅ NOWE - Wyczyść stan górnej bandy przy starcie instancji
-      analysisService.resetUpperBandState(instanceId);
-      this.instances.set(instanceId, {
-        ...instance.toObject(),
-        lastStarted: new Date(),
-      });
-
-      instance.active = true;
-      instance.updatedAt = new Date();
-      await instance.save();
-
-      TradingLogger.logInstanceState(
-        instanceId,
-        "Started",
-        `${instance.name} (${instance.symbol})`
-      );
-      return true;
-    } catch (error) {
-      TradingLogger.logTradingError(
-        instanceId,
-        "UNKNOWN",
-        error.message,
-        "Start failed"
-      );
-      return false;
-    }
+    });
   }
 
   async stopInstance(instanceId) {
-    try {
-      if (!this.instances.has(instanceId)) {
-        return true; // Już zatrzymana
+    return mutex.withLock(`stop-${instanceId}`, async () => {
+      try {
+        if (!this.instances.has(instanceId)) {
+          return true;
+        }
+
+        await analysisService.resetUpperBandState(instanceId);
+
+        analysisService.stopInstance(instanceId);
+        this.instances.delete(instanceId);
+
+        const instance = await Instance.findOne({ instanceId });
+        if (instance) {
+          instance.active = false;
+          instance.updatedAt = new Date();
+          await instance.save();
+        }
+
+        TradingLogger.logInstanceState(instanceId, "Stopped");
+        return true;
+      } catch (error) {
+        TradingLogger.logTradingError(
+          instanceId,
+          "UNKNOWN",
+          error.message,
+          "Stop failed"
+        );
+        return false;
       }
-
-      // ✅ NOWE - Wyczyść stan górnej bandy przed zatrzymaniem
-      analysisService.resetUpperBandState(instanceId);
-
-      analysisService.stopInstance(instanceId);
-      this.instances.delete(instanceId);
-
-      const instance = await Instance.findOne({ instanceId });
-      if (instance) {
-        instance.active = false;
-        instance.updatedAt = new Date();
-        await instance.save();
-      }
-
-      TradingLogger.logInstanceState(instanceId, "Stopped");
-      return true;
-    } catch (error) {
-      TradingLogger.logTradingError(
-        instanceId,
-        "UNKNOWN",
-        error.message,
-        "Stop failed"
-      );
-      return false;
-    }
+    });
   }
 
   async updateInstance(instanceId, updateData) {
-    try {
-      const instance = await Instance.findOne({ instanceId });
-      if (!instance) {
-        throw new Error(`Instancja ${instanceId} nie istnieje`);
+    return mutex.withLock(`update-${instanceId}`, async () => {
+      try {
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          throw new Error(`Instancja ${instanceId} nie istnieje`);
+        }
+
+        const isRunning = this.instances.has(instanceId);
+        if (isRunning) {
+          await this.stopInstance(instanceId);
+        }
+
+        if (updateData.name) instance.name = updateData.name;
+        if (updateData.symbol) instance.symbol = updateData.symbol;
+        if (updateData.active !== undefined)
+          instance.active = updateData.active;
+
+        if (updateData.strategy?.parameters?.hurst) {
+          instance.strategy.parameters.hurst = {
+            ...instance.strategy.parameters.hurst,
+            ...updateData.strategy.parameters.hurst,
+          };
+        }
+
+        if (updateData.strategy?.parameters?.ema) {
+          instance.strategy.parameters.ema = {
+            ...instance.strategy.parameters.ema,
+            ...updateData.strategy.parameters.ema,
+          };
+        }
+
+        if (updateData.strategy?.parameters?.checkEMATrend !== undefined) {
+          instance.strategy.parameters.checkEMATrend =
+            updateData.strategy.parameters.checkEMATrend;
+        }
+
+        instance.updatedAt = new Date();
+        await instance.save();
+
+        if (isRunning || instance.active) {
+          await this.startInstance(instanceId);
+        }
+
+        TradingLogger.logInstanceState(
+          instanceId,
+          "Updated",
+          `${instance.name} (${instance.symbol})`
+        );
+        return instance;
+      } catch (error) {
+        TradingLogger.logTradingError(
+          instanceId,
+          "UNKNOWN",
+          error.message,
+          "Update failed"
+        );
+        throw error;
       }
-
-      const isRunning = this.instances.has(instanceId);
-      if (isRunning) {
-        await this.stopInstance(instanceId);
-      }
-
-      if (updateData.name) instance.name = updateData.name;
-      if (updateData.symbol) instance.symbol = updateData.symbol;
-      if (updateData.active !== undefined) instance.active = updateData.active;
-
-      if (updateData.strategy?.parameters?.hurst) {
-        instance.strategy.parameters.hurst = {
-          ...instance.strategy.parameters.hurst,
-          ...updateData.strategy.parameters.hurst,
-        };
-      }
-
-      if (updateData.strategy?.parameters?.ema) {
-        instance.strategy.parameters.ema = {
-          ...instance.strategy.parameters.ema,
-          ...updateData.strategy.parameters.ema,
-        };
-      }
-
-      if (updateData.strategy?.parameters?.checkEMATrend !== undefined) {
-        instance.strategy.parameters.checkEMATrend =
-          updateData.strategy.parameters.checkEMATrend;
-      }
-
-      instance.updatedAt = new Date();
-      await instance.save();
-
-      if (isRunning || instance.active) {
-        await this.startInstance(instanceId);
-      }
-
-      TradingLogger.logInstanceState(
-        instanceId,
-        "Updated",
-        `${instance.name} (${instance.symbol})`
-      );
-      return instance;
-    } catch (error) {
-      TradingLogger.logTradingError(
-        instanceId,
-        "UNKNOWN",
-        error.message,
-        "Update failed"
-      );
-      throw error;
-    }
+    });
   }
 
   async deleteInstance(instanceId) {
-    try {
-      const instance = await Instance.findOne({ instanceId });
-      if (!instance) {
-        throw new Error(`Instancja ${instanceId} nie istnieje`);
-      }
-
-      if (this.instances.has(instanceId)) {
-        await this.stopInstance(instanceId);
-      }
-
-      const deletedSignals = await Signal.deleteMany({ instanceId });
-
+    return mutex.withLock(`delete-${instanceId}`, async () => {
       try {
-        const signalService = require("./signal.service");
-        if (signalService.positionHistory) {
-          signalService.positionHistory.delete(instanceId);
-          signalService.lastEntryTimes.delete(instanceId);
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          throw new Error(`Instancja ${instanceId} nie istnieje`);
         }
-      } catch (e) {
-        // Ignoruj błędy czyszczenia pamięci
+
+        if (this.instances.has(instanceId)) {
+          await this.stopInstance(instanceId);
+        }
+
+        const deletedSignals = await Signal.deleteMany({ instanceId });
+
+        try {
+          if (signalService.positionHistory) {
+            signalService.positionHistory.delete(instanceId);
+            signalService.lastEntryTimes.delete(instanceId);
+          }
+        } catch (e) {
+          // Ignoruj błędy czyszczenia pamięci
+        }
+
+        await Instance.deleteOne({ instanceId });
+
+        TradingLogger.logInstanceState(
+          instanceId,
+          "Deleted",
+          `${instance.name} + ${deletedSignals.deletedCount} signals`
+        );
+        return true;
+      } catch (error) {
+        TradingLogger.logTradingError(
+          instanceId,
+          "UNKNOWN",
+          error.message,
+          "Delete failed"
+        );
+        return false;
       }
-
-      await Instance.deleteOne({ instanceId });
-
-      TradingLogger.logInstanceState(
-        instanceId,
-        "Deleted",
-        `${instance.name} + ${deletedSignals.deletedCount} signals`
-      );
-      return true;
-    } catch (error) {
-      TradingLogger.logTradingError(
-        instanceId,
-        "UNKNOWN",
-        error.message,
-        "Delete failed"
-      );
-      return false;
-    }
+    });
   }
 
   async getAllInstances(activeOnly = false) {
@@ -431,7 +437,7 @@ class InstanceService {
       const instance = await Instance.findOne({ instanceId });
 
       if (!instance || !instance.bybitConfig?.apiKey || instance.testMode) {
-        return false; // Cicho pomiń
+        return false;
       }
 
       const balanceData = await bybitService.getBalance(
@@ -500,7 +506,6 @@ class InstanceService {
     }
   }
 
-  // Prywatna funkcja do dekodowania kluczy API
   _decodeApiKeys(bybitConfig) {
     const decoded = { ...bybitConfig };
 
@@ -527,55 +532,56 @@ class InstanceService {
     } catch (error) {
       // Ignoruj błędy dekodowania
     }
-    return str; // Zwróć oryginalny jeśli dekodowanie nie powiodło się
+    return str;
   }
 
   async updateBybitConfig(
     instanceId,
     { apiKey, apiSecret, leverage, marginMode, testnet }
   ) {
-    try {
-      const instance = await Instance.findOne({ instanceId });
-      if (!instance) {
-        throw new Error("Instance not found");
+    return mutex.withLock(`bybit-config-${instanceId}`, async () => {
+      try {
+        const instance = await Instance.findOne({ instanceId });
+        if (!instance) {
+          throw new Error("Instance not found");
+        }
+
+        const decodedApiKey = apiKey
+          ? this._tryDecodeBase64(apiKey)
+          : instance.bybitConfig?.apiKey;
+        const decodedApiSecret = apiSecret
+          ? this._tryDecodeBase64(apiSecret)
+          : instance.bybitConfig?.apiSecret;
+
+        instance.bybitConfig = {
+          apiKey: decodedApiKey,
+          apiSecret: decodedApiSecret,
+          leverage: leverage || 3,
+          marginMode: marginMode || "isolated",
+          testnet: testnet !== false,
+        };
+
+        await instance.save();
+
+        TradingLogger.logConfig(instanceId, "ByBit config updated", {
+          leverage: instance.bybitConfig.leverage,
+          marginMode: instance.bybitConfig.marginMode,
+          testnet: instance.bybitConfig.testnet,
+          hasApiKey: !!instance.bybitConfig.apiKey,
+          hasApiSecret: !!instance.bybitConfig.apiSecret,
+        });
+
+        return instance;
+      } catch (error) {
+        TradingLogger.logTradingError(
+          instanceId,
+          "UNKNOWN",
+          error.message,
+          "ByBit config update failed"
+        );
+        throw error;
       }
-
-      // Dekoduj klucze jeśli potrzeba
-      const decodedApiKey = apiKey
-        ? this._tryDecodeBase64(apiKey)
-        : instance.bybitConfig?.apiKey;
-      const decodedApiSecret = apiSecret
-        ? this._tryDecodeBase64(apiSecret)
-        : instance.bybitConfig?.apiSecret;
-
-      instance.bybitConfig = {
-        apiKey: decodedApiKey,
-        apiSecret: decodedApiSecret,
-        leverage: leverage || 3,
-        marginMode: marginMode || "isolated",
-        testnet: testnet !== false,
-      };
-
-      await instance.save();
-
-      TradingLogger.logConfig(instanceId, "ByBit config updated", {
-        leverage: instance.bybitConfig.leverage,
-        marginMode: instance.bybitConfig.marginMode,
-        testnet: instance.bybitConfig.testnet,
-        hasApiKey: !!instance.bybitConfig.apiKey,
-        hasApiSecret: !!instance.bybitConfig.apiSecret,
-      });
-
-      return instance;
-    } catch (error) {
-      TradingLogger.logTradingError(
-        instanceId,
-        "UNKNOWN",
-        error.message,
-        "ByBit config update failed"
-      );
-      throw error;
-    }
+    });
   }
 }
 
