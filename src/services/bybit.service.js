@@ -109,7 +109,8 @@ class ByBitService {
         {
           accountType: "UNIFIED",
           coin: "USDT",
-          memberId: subUid || undefined,
+          // Tymczasowo bez subkonta
+          // memberId: subUid || undefined,
         }
       );
 
