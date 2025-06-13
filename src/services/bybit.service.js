@@ -94,61 +94,119 @@ class ByBitService {
     }
   }
 
+  // Poprawiona metoda getBalance w bybit.service.js
+
   async getBalance(apiKey, apiSecret, subUid = null) {
     try {
+      logger.info(`[BYBIT] Getting balance for account...`);
+
+      // Używamy właściwego endpointu
       const response = await this.makeRequest(
         "GET",
-        "/v5/asset/transfer/query-account-coins-balance",
+        "/v5/account/wallet-balance",
         apiKey,
         apiSecret,
         {
           accountType: "UNIFIED",
           coin: "USDT",
-          memberId: subUid || undefined,
         }
       );
 
-      if (response.result?.balance?.length > 0) {
-        const balance = response.result.balance[0];
+      logger.info(`[BYBIT] API Response: ${JSON.stringify(response, null, 2)}`);
+
+      if (response.retCode !== 0) {
+        logger.error(`[BYBIT] API Error: ${response.retMsg}`);
         return {
-          retCode: 0,
-          result: {
-            list: [
-              {
-                accountType: "UNIFIED",
-                coin: [
-                  {
-                    coin: "USDT",
-                    walletBalance: balance.walletBalance,
-                    availableToWithdraw: balance.transferBalance,
-                  },
-                ],
-              },
-            ],
-          },
+          retCode: response.retCode,
+          retMsg: response.retMsg,
+          result: null,
         };
       }
-    } catch (error) {
-      logger.error(`Error getting balance: ${error.message}`);
-    }
 
-    return {
-      retCode: 0,
-      result: {
-        list: [
-          {
-            accountType: "UNIFIED",
-            coin: [
-              {
-                coin: "USDT",
-                walletBalance: "0",
-                availableToWithdraw: "0",
-              },
-            ],
-          },
-        ],
-      },
-    };
+      // Parsowanie nowej struktury odpowiedzi
+      if (response.result?.list?.length > 0) {
+        const account = response.result.list[0]; // Pierwszy account (UNIFIED)
+
+        logger.info(`[BYBIT] Account type: ${account.accountType}`);
+        logger.info(`[BYBIT] Coins found: ${account.coin?.length || 0}`);
+
+        const usdtCoin = account.coin?.find((coin) => coin.coin === "USDT");
+
+        if (usdtCoin) {
+          logger.info(`[BYBIT] USDT Balance: ${usdtCoin.walletBalance}`);
+          logger.info(
+            `[BYBIT] Available: ${usdtCoin.availableToWithdraw || usdtCoin.availableToBorrow || usdtCoin.walletBalance}`
+          );
+
+          // Zwracamy w starym formacie żeby nie zepsuć reszty kodu
+          return {
+            retCode: 0,
+            result: {
+              list: [
+                {
+                  accountType: "UNIFIED",
+                  coin: [
+                    {
+                      coin: "USDT",
+                      walletBalance: usdtCoin.walletBalance,
+                      availableToWithdraw:
+                        usdtCoin.availableToWithdraw ||
+                        usdtCoin.availableToBorrow ||
+                        usdtCoin.walletBalance,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        } else {
+          logger.warn(`[BYBIT] USDT coin not found in response`);
+        }
+      } else {
+        logger.warn(`[BYBIT] No accounts found in response`);
+      }
+
+      // Fallback - zwróć pustą odpowiedź
+      return {
+        retCode: 0,
+        result: {
+          list: [
+            {
+              accountType: "UNIFIED",
+              coin: [
+                {
+                  coin: "USDT",
+                  walletBalance: "0",
+                  availableToWithdraw: "0",
+                },
+              ],
+            },
+          ],
+        },
+      };
+    } catch (error) {
+      logger.error(`[BYBIT] Error getting balance: ${error.message}`);
+
+      // Fallback w przypadku błędu
+      return {
+        retCode: -1,
+        retMsg: error.message,
+        result: {
+          list: [
+            {
+              accountType: "UNIFIED",
+              coin: [
+                {
+                  coin: "USDT",
+                  walletBalance: "0",
+                  availableToWithdraw: "0",
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
   }
 
   async getPositionMode(apiKey, apiSecret, subaccountId = null) {
