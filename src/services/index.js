@@ -1,21 +1,15 @@
-/**
- * Services Index - indeks serwisów
- *
- * Eksportuje wszystkie serwisy do łatwego importu w innych częściach aplikacji
- */
-
-const binanceService = require("./binance.service");
-const analysisService = require("./analysis.service");
-const signalService = require("./signal.service");
-const instanceService = require("./instance.service");
-const dbService = require("./db.service");
-const wsService = require("./ws.service");
+const technical = require("./technical");
+const logger = require("./logger");
+const websocket = require("./websocket");
+const validators = require("./validators");
+const mutex = require("./mutex");
+const upperBandStateManager = require("./upper-band-state-manager");
 
 module.exports = {
-  binanceService,
-  analysisService,
-  signalService,
-  instanceService,
-  dbService,
-  wsService,
+  technical,
+  logger,
+  websocket,
+  validators,
+  mutex,
+  upperBandStateManager,
 };
