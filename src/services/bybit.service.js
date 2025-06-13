@@ -100,15 +100,16 @@ class ByBitService {
     try {
       logger.info(`[BYBIT] Getting balance for account...`);
 
-      // Używamy właściwego endpointu
+      // Wracamy do oryginalnego endpointu z lepszymi logami
       const response = await this.makeRequest(
         "GET",
-        "/v5/account/wallet-balance",
+        "/v5/asset/transfer/query-account-coins-balance",
         apiKey,
         apiSecret,
         {
           accountType: "UNIFIED",
           coin: "USDT",
+          memberId: subUid || undefined,
         }
       );
 
@@ -208,7 +209,6 @@ class ByBitService {
       };
     }
   }
-
   async getPositionMode(apiKey, apiSecret, subaccountId = null) {
     try {
       const params = {
