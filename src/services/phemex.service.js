@@ -97,7 +97,11 @@ class PhemexService {
   async getBalance(apiKey, apiSecret, currency = "USDT") {
     try {
       logger.info(`[PHEMEX] Getting balance for account...`);
-
+      logger.info(`[PHEMEX] Request details:`, {
+        url: `${this.baseUrl}/accounts/accountPositions`,
+        apiKey: apiKey ? apiKey.substring(0, 8) + "..." : "MISSING",
+        currency,
+      });
       const response = await this.makeRequest(
         "GET",
         "/accounts/accountPositions",
@@ -106,10 +110,17 @@ class PhemexService {
         { currency }
       );
 
-      logger.info(
-        `[PHEMEX] API Response: ${JSON.stringify(response, null, 2)}`
-      );
-
+      logger.info(`[PHEMEX] RAW API Response:`, response);
+      logger.info(`[PHEMEX] Response structure analysis:`, {
+        responseCode: response?.code,
+        responseMsg: response?.msg,
+        hasData: !!response?.data,
+        dataKeys: response?.data ? Object.keys(response.data) : null,
+        hasAccount: !!response?.data?.account,
+        accountKeys: response?.data?.account
+          ? Object.keys(response.data.account)
+          : null,
+      });
       if (response.code !== 0) {
         logger.error(`[PHEMEX] API Error: ${response.msg}`);
         return {
@@ -171,6 +182,15 @@ class PhemexService {
         },
       };
     } catch (error) {
+      logger.error(`[PHEMEX] Full error details:`, {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        stack: error.stack,
+      });
+
+      logger.error(`[PHEMEX] Error getting balance: ${error.message}`);
       logger.error(`[PHEMEX] Error getting balance: ${error.message}`);
 
       return {

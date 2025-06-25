@@ -443,6 +443,12 @@ class InstanceService {
         return false;
       }
 
+      TradingLogger.logConfig(instanceId, "Starting balance sync", {
+        hasApiKey: !!instance.phemexConfig?.apiKey,
+        hasApiSecret: !!instance.phemexConfig?.apiSecret,
+        testMode: instance.testMode,
+      });
+
       const balanceData = await phemexService.getBalance(
         instance.phemexConfig.apiKey,
         instance.phemexConfig.apiSecret,
