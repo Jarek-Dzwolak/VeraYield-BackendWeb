@@ -5,7 +5,7 @@ const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
 const TradingLogger = require("../utils/trading-logger");
 const { v4: uuidv4 } = require("uuid");
-const bybitService = require("./bybit.service");
+const phemexService = require("./phemex.service");
 const Signal = require("../models/signal.model");
 
 class InstanceService {
@@ -88,8 +88,8 @@ class InstanceService {
           throw new Error(`Instancja o ID ${instanceId} już istnieje`);
         }
 
-        if (config.bybitConfig) {
-          config.bybitConfig = this._decodeApiKeys(config.bybitConfig);
+        if (config.phemexConfig) {
+          config.phemexConfig = this._decodeApiKeys(config.phemexConfig);
         }
 
         const instance = new Instance({
@@ -139,8 +139,8 @@ class InstanceService {
           closedPositions: [],
         };
 
-        if (config.bybitConfig) {
-          instance.bybitConfig = config.bybitConfig;
+        if (config.phemexConfig) {
+          instance.phemexConfig = config.phemexConfig;
         }
 
         await instance.save();
@@ -149,7 +149,7 @@ class InstanceService {
           await this.startInstance(instanceId);
         }
 
-        if (instance.bybitConfig?.apiKey && !instance.testMode) {
+        if (instance.phemexConfig?.apiKey && !instance.testMode) {
           setTimeout(async () => {
             try {
               await this.syncInstanceBalance(instanceId);
@@ -194,8 +194,8 @@ class InstanceService {
         }
 
         if (
-          instance.bybitConfig &&
-          instance.bybitConfig.apiKey &&
+          instance.phemexConfig &&
+          instance.phemexConfig.apiKey &&
           !instance.testMode
         ) {
           await this.syncInstanceBalance(instanceId);
@@ -436,21 +436,21 @@ class InstanceService {
     try {
       const instance = await Instance.findOne({ instanceId });
 
-      if (!instance || !instance.bybitConfig?.apiKey || instance.testMode) {
+      if (!instance || !instance.phemexConfig?.apiKey || instance.testMode) {
         return false;
       }
 
-      const balanceData = await bybitService.getBalance(
-        instance.bybitConfig.apiKey,
-        instance.bybitConfig.apiSecret,
-        instance.bybitConfig.subaccountId
+      const balanceData = await phemexService.getBalance(
+        instance.phemexConfig.apiKey,
+        instance.phemexConfig.apiSecret,
+        "USDT"
       );
 
       if (balanceData.retCode !== 0) {
         TradingLogger.logTradingError(
           instanceId,
           instance.symbol,
-          `ByBit API error: ${balanceData.retMsg}`,
+          `Phemex API error: ${balanceData.retMsg}`,
           "Balance sync"
         );
         return false;
@@ -506,8 +506,8 @@ class InstanceService {
     }
   }
 
-  _decodeApiKeys(bybitConfig) {
-    const decoded = { ...bybitConfig };
+  _decodeApiKeys(phemexConfig) {
+    const decoded = { ...phemexConfig };
 
     if (decoded.apiKey) {
       decoded.apiKey = this._tryDecodeBase64(decoded.apiKey);
@@ -535,11 +535,11 @@ class InstanceService {
     return str;
   }
 
-  async updateBybitConfig(
+  async updatePhemexConfig(
     instanceId,
     { apiKey, apiSecret, leverage, marginMode, testnet }
   ) {
-    return mutex.withLock(`bybit-config-${instanceId}`, async () => {
+    return mutex.withLock(`phemex-config-${instanceId}`, async () => {
       try {
         const instance = await Instance.findOne({ instanceId });
         if (!instance) {
@@ -548,12 +548,12 @@ class InstanceService {
 
         const decodedApiKey = apiKey
           ? this._tryDecodeBase64(apiKey)
-          : instance.bybitConfig?.apiKey;
+          : instance.phemexConfig?.apiKey;
         const decodedApiSecret = apiSecret
           ? this._tryDecodeBase64(apiSecret)
-          : instance.bybitConfig?.apiSecret;
+          : instance.phemexConfig?.apiSecret;
 
-        instance.bybitConfig = {
+        instance.phemexConfig = {
           apiKey: decodedApiKey,
           apiSecret: decodedApiSecret,
           leverage: leverage || 3,
@@ -563,12 +563,12 @@ class InstanceService {
 
         await instance.save();
 
-        TradingLogger.logConfig(instanceId, "ByBit config updated", {
-          leverage: instance.bybitConfig.leverage,
-          marginMode: instance.bybitConfig.marginMode,
-          testnet: instance.bybitConfig.testnet,
-          hasApiKey: !!instance.bybitConfig.apiKey,
-          hasApiSecret: !!instance.bybitConfig.apiSecret,
+        TradingLogger.logConfig(instanceId, "Phemex config updated", {
+          leverage: instance.phemexConfig.leverage,
+          marginMode: instance.phemexConfig.marginMode,
+          testnet: instance.phemexConfig.testnet,
+          hasApiKey: !!instance.phemexConfig.apiKey,
+          hasApiSecret: !!instance.phemexConfig.apiSecret,
         });
 
         return instance;
@@ -577,7 +577,7 @@ class InstanceService {
           instanceId,
           "UNKNOWN",
           error.message,
-          "ByBit config update failed"
+          "Phemex config update failed"
         );
         throw error;
       }

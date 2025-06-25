@@ -257,6 +257,31 @@ const InstanceSchema = new Schema({
     type: Boolean,
     default: false,
   },
+
+  phemexConfig: {
+    apiKey: {
+      type: String,
+      default: "",
+    },
+    apiSecret: {
+      type: String,
+      default: "",
+    },
+    subaccountId: {
+      type: String,
+      default: "",
+    },
+    leverage: {
+      type: Number,
+      default: 3,
+    },
+    marginMode: {
+      type: String,
+      enum: ["isolated", "cross"],
+      default: "isolated",
+    },
+  },
+  // ❌ DEPRECATED - zachowane dla kompatybilności z istniejącymi danymi
   bybitConfig: {
     apiKey: {
       type: String,
@@ -295,6 +320,7 @@ InstanceSchema.pre("save", function (next) {
   this.updatedAt = Date.now();
   next();
 });
+
 /**
  * Metoda - aktualizacja bilansu instancji
  * @param {Object} balanceUpdate - Dane do aktualizacji bilansu

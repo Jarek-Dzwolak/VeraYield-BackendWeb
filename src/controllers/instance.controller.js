@@ -12,7 +12,7 @@ const signalService = require("../services/signal.service");
 const logger = require("../utils/logger");
 const { v4: uuidv4 } = require("uuid");
 const { validateInstanceParams } = require("../config/instance.config");
-const Instance = require("../models/instance.model"); // Dodany brakujący import
+const Instance = require("../models/instance.model");
 
 /**
  * Pobiera wszystkie instancje
@@ -92,7 +92,6 @@ const getInstance = async (req, res) => {
 };
 
 /**
- /**
  * Tworzy nową instancję
  * @param {Object} req - Obiekt żądania
  * @param {Object} res - Obiekt odpowiedzi
@@ -106,26 +105,26 @@ const createInstance = async (req, res) => {
       active,
       initialFunds,
       testMode,
-      bybitConfig,
+      phemexConfig,
     } = req.body;
 
     // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
     logger.info("=== DEBUGOWANIE KLUCZY API ===");
-    if (bybitConfig && bybitConfig.apiKey) {
-      logger.info(`Raw received API Key: "${bybitConfig.apiKey}"`);
-      logger.info(`API Key length: ${bybitConfig.apiKey.length}`);
+    if (phemexConfig && phemexConfig.apiKey) {
+      logger.info(`Raw received API Key: "${phemexConfig.apiKey}"`);
+      logger.info(`API Key length: ${phemexConfig.apiKey.length}`);
       logger.info(
-        `API Key first 20 chars: "${bybitConfig.apiKey.substring(0, 20)}"`
+        `API Key first 20 chars: "${phemexConfig.apiKey.substring(0, 20)}"`
       );
 
       try {
         // Sprawdź czy jest to Base64
         const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(bybitConfig.apiKey);
+        const isBase64 = base64Regex.test(phemexConfig.apiKey);
         logger.info(`Is API Key Base64: ${isBase64}`);
 
-        if (isBase64 && bybitConfig.apiKey.length > 10) {
-          const decoded = Buffer.from(bybitConfig.apiKey, "base64").toString(
+        if (isBase64 && phemexConfig.apiKey.length > 10) {
+          const decoded = Buffer.from(phemexConfig.apiKey, "base64").toString(
             "utf8"
           );
           logger.info(`Decoded API Key: "${decoded}"`);
@@ -136,7 +135,7 @@ const createInstance = async (req, res) => {
           logger.info(`Is decoded API Key alphanumeric: ${isAlphanumeric}`);
 
           if (isAlphanumeric) {
-            bybitConfig.apiKey = decoded;
+            phemexConfig.apiKey = decoded;
             logger.info("✅ API Key successfully decoded and stored");
           } else {
             logger.warn(
@@ -151,23 +150,24 @@ const createInstance = async (req, res) => {
       }
     }
 
-    if (bybitConfig && bybitConfig.apiSecret) {
-      logger.info(`Raw received API Secret: "${bybitConfig.apiSecret}"`);
-      logger.info(`API Secret length: ${bybitConfig.apiSecret.length}`);
+    if (phemexConfig && phemexConfig.apiSecret) {
+      logger.info(`Raw received API Secret: "${phemexConfig.apiSecret}"`);
+      logger.info(`API Secret length: ${phemexConfig.apiSecret.length}`);
       logger.info(
-        `API Secret first 20 chars: "${bybitConfig.apiSecret.substring(0, 20)}"`
+        `API Secret first 20 chars: "${phemexConfig.apiSecret.substring(0, 20)}"`
       );
 
       try {
         // Sprawdź czy jest to Base64
         const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(bybitConfig.apiSecret);
+        const isBase64 = base64Regex.test(phemexConfig.apiSecret);
         logger.info(`Is API Secret Base64: ${isBase64}`);
 
-        if (isBase64 && bybitConfig.apiSecret.length > 10) {
-          const decoded = Buffer.from(bybitConfig.apiSecret, "base64").toString(
-            "utf8"
-          );
+        if (isBase64 && phemexConfig.apiSecret.length > 10) {
+          const decoded = Buffer.from(
+            phemexConfig.apiSecret,
+            "base64"
+          ).toString("utf8");
           logger.info(`Decoded API Secret: "${decoded}"`);
           logger.info(`Decoded API Secret length: ${decoded.length}`);
 
@@ -176,7 +176,7 @@ const createInstance = async (req, res) => {
           logger.info(`Is decoded API Secret alphanumeric: ${isAlphanumeric}`);
 
           if (isAlphanumeric) {
-            bybitConfig.apiSecret = decoded;
+            phemexConfig.apiSecret = decoded;
             logger.info("✅ API Secret successfully decoded and stored");
           } else {
             logger.warn(
@@ -198,10 +198,10 @@ const createInstance = async (req, res) => {
       name,
       active,
       strategy,
-      initialFunds, // Dodanie obsługi początkowych środków
-      testMode, // Dodaj flagę testMode z formularza
-      instanceId: uuidv4(), // Generuj nowy UUID
-      bybitConfig: bybitConfig || {}, // Dodaj konfigurację ByBit
+      initialFunds,
+      testMode,
+      instanceId: uuidv4(),
+      phemexConfig: phemexConfig || {},
     };
 
     // Utwórz instancję
@@ -221,7 +221,6 @@ const createInstance = async (req, res) => {
 };
 
 /**
-
  * Aktualizuje instancję
  * @param {Object} req - Obiekt żądania
  * @param {Object} res - Obiekt odpowiedzi
@@ -686,15 +685,15 @@ const stopAllInstances = async (req, res) => {
 };
 
 /**
- * Aktualizuje konfigurację ByBit dla instancji
+ * Aktualizuje konfigurację Phemex dla instancji
  */
-const updateBybitConfig = async (req, res) => {
+const updatePhemexConfig = async (req, res) => {
   try {
     const { instanceId } = req.params;
     const { apiKey, apiSecret, leverage, marginMode, testnet } = req.body;
 
     // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
-    logger.info("=== DEBUGOWANIE UPDATE BYBIT KLUCZY ===");
+    logger.info("=== DEBUGOWANIE UPDATE PHEMEX KLUCZY ===");
     let decodedApiKey = apiKey;
     let decodedApiSecret = apiSecret;
 
@@ -756,8 +755,8 @@ const updateBybitConfig = async (req, res) => {
       });
     }
 
-    // Aktualizuj konfigurację ByBit
-    instance.bybitConfig = {
+    // Aktualizuj konfigurację Phemex
+    instance.phemexConfig = {
       apiKey: decodedApiKey,
       apiSecret: decodedApiSecret,
       leverage: leverage || 3,
@@ -768,24 +767,36 @@ const updateBybitConfig = async (req, res) => {
     await instance.save();
 
     res.json({
-      message: "ByBit configuration updated successfully",
+      message: "Phemex configuration updated successfully",
       instanceId,
-      bybitConfig: {
-        ...instance.bybitConfig,
+      phemexConfig: {
+        ...instance.phemexConfig,
         apiSecret: "***", // Nie zwracaj sekretu w odpowiedzi
       },
     });
   } catch (error) {
-    logger.error(`Error updating ByBit config: ${error.message}`);
+    logger.error(`Error updating Phemex config: ${error.message}`);
     res.status(500).json({
       error: "Internal Server Error",
-      message: "An error occurred while updating ByBit configuration",
+      message: "An error occurred while updating Phemex configuration",
     });
   }
 };
 
 /**
- * Synchronizuje saldo instancji z ByBit
+ * DEPRECATED - Aktualizuje konfigurację ByBit dla instancji
+ */
+const updateBybitConfig = async (req, res) => {
+  logger.warn(
+    "updateBybitConfig is deprecated, use updatePhemexConfig instead"
+  );
+
+  // Przekieruj na nową funkcję
+  return updatePhemexConfig(req, res);
+};
+
+/**
+ * Synchronizuje saldo instancji z Phemex
  */
 const syncInstanceBalance = async (req, res) => {
   try {
@@ -815,7 +826,7 @@ const syncInstanceBalance = async (req, res) => {
       res.status(400).json({
         error: "Sync Failed",
         message:
-          "Nie udało się zsynchronizować salda. Sprawdź konfigurację ByBit.",
+          "Nie udało się zsynchronizować salda. Sprawdź konfigurację Phemex.",
       });
     }
   } catch (error) {
@@ -843,6 +854,7 @@ module.exports = {
   cloneInstance,
   compareInstances,
   stopAllInstances,
+  updatePhemexConfig,
   updateBybitConfig,
   syncInstanceBalance,
 };

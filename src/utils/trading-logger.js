@@ -1,6 +1,6 @@
 /**
  * Trading Logger - dedykowane funkcje logowania dla operacji tradingowych
- * ✅ ROZSZERZONE O NOWE LOGI GÓRNEJ BANDY
+ * ✅ ZAKTUALIZOWANE O LOGI PHEMEX
  */
 
 const logger = require("./logger");
@@ -137,7 +137,25 @@ class TradingLogger {
   }
 
   /**
-   * Loguje błędy API ByBit
+   * ✅ PHEMEX - Loguje błędy API Phemex
+   */
+  static logPhemexError(instanceId, symbol, operation, error) {
+    logger.error(
+      `[PHEMEX ERROR] ${symbol} | ${operation} failed: ${error} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ✅ PHEMEX - Loguje sukces operacji Phemex (tylko najważniejsze)
+   */
+  static logPhemexSuccess(instanceId, symbol, operation, details = "") {
+    logger.info(
+      `[PHEMEX] ${symbol} | ${operation} successful ${details ? "| " + details : ""} | Instance: ${instanceId.slice(-8)}`
+    );
+  }
+
+  /**
+   * ❌ DEPRECATED - Loguje błędy API ByBit (zachowane dla kompatybilności)
    */
   static logBybitError(instanceId, symbol, operation, error) {
     logger.error(
@@ -146,7 +164,7 @@ class TradingLogger {
   }
 
   /**
-   * Loguje sukces operacji ByBit (tylko najważniejsze)
+   * ❌ DEPRECATED - Loguje sukces operacji ByBit (zachowane dla kompatybilności)
    */
   static logBybitSuccess(instanceId, symbol, operation, details = "") {
     logger.info(
@@ -195,6 +213,14 @@ class TradingLogger {
   static logConfig(instanceId, action, config) {
     const safeConfig = { ...config };
     // Usuń wrażliwe dane
+    if (safeConfig.phemexConfig) {
+      safeConfig.phemexConfig = {
+        ...safeConfig.phemexConfig,
+        apiKey: safeConfig.phemexConfig.apiKey ? "***" : "not set",
+        apiSecret: safeConfig.phemexConfig.apiSecret ? "***" : "not set",
+      };
+    }
+    // DEPRECATED - zachowane dla kompatybilności
     if (safeConfig.bybitConfig) {
       safeConfig.bybitConfig = {
         ...safeConfig.bybitConfig,

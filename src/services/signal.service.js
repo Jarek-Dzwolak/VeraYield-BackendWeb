@@ -1,4 +1,4 @@
-const bybitService = require("./bybit.service");
+const phemexService = require("./phemex.service");
 const accountService = require("./account.service");
 const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
@@ -139,13 +139,13 @@ class SignalService extends EventEmitter {
         const minEntryTimeGap =
           strategyParams.signals?.minEntryTimeGap || 7200000;
 
-        const currentPrice = await bybitService.getCurrentPrice(
+        const currentPrice = await phemexService.getCurrentPrice(
           instance.symbol
         );
-        const instrumentInfo = await bybitService.getCachedInstrumentInfo(
+        const instrumentInfo = await phemexService.getCachedInstrumentInfo(
           instance.symbol
         );
-        const leverage = instance.bybitConfig?.leverage || 3;
+        const leverage = instance.phemexConfig?.leverage || 3;
 
         if (!currentPosition) {
           const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
@@ -211,46 +211,46 @@ class SignalService extends EventEmitter {
               signal._id
             );
 
-            if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+            if (instance.phemexConfig && instance.phemexConfig.apiKey) {
               try {
-                await bybitService.setLeverage(
-                  instance.bybitConfig.apiKey,
-                  instance.bybitConfig.apiSecret,
+                await phemexService.setLeverage(
+                  instance.phemexConfig.apiKey,
+                  instance.phemexConfig.apiSecret,
                   instance.symbol,
                   leverage
                 );
-                await bybitService.setMarginMode(
-                  instance.bybitConfig.apiKey,
-                  instance.bybitConfig.apiSecret,
+                await phemexService.setMarginMode(
+                  instance.phemexConfig.apiKey,
+                  instance.phemexConfig.apiSecret,
                   instance.symbol,
-                  instance.bybitConfig.marginMode === "isolated" ? 1 : 0
+                  instance.phemexConfig.marginMode === "isolated" ? 1 : 0
                 );
 
-                const orderResult = await bybitService.openPosition(
-                  instance.bybitConfig.apiKey,
-                  instance.bybitConfig.apiSecret,
+                const orderResult = await phemexService.openPosition(
+                  instance.phemexConfig.apiKey,
+                  instance.phemexConfig.apiSecret,
                   instance.symbol,
                   "Buy",
                   optimalEntry.adjustedQuantity.toString(),
                   0,
-                  instance.bybitConfig.subaccountId
+                  instance.phemexConfig.subaccountId
                 );
 
-                TradingLogger.logBybitSuccess(
+                TradingLogger.logPhemexSuccess(
                   instanceId,
                   instance.symbol,
                   "Order placed",
                   `ID: ${orderResult.result?.orderId}`
                 );
 
-                signal.metadata.bybitOrderId = orderResult.result?.orderId;
-                signal.metadata.bybitOrderLinkId =
+                signal.metadata.phemexOrderId = orderResult.result?.orderId;
+                signal.metadata.phemexOrderLinkId =
                   orderResult.result?.orderLinkId;
                 signal.metadata.contractQuantity =
                   optimalEntry.adjustedQuantity;
                 await signal.save();
               } catch (error) {
-                TradingLogger.logBybitError(
+                TradingLogger.logPhemexError(
                   instanceId,
                   instance.symbol,
                   "Order placement",
@@ -421,33 +421,33 @@ class SignalService extends EventEmitter {
               signal._id
             );
 
-            if (instance.bybitConfig && instance.bybitConfig.apiKey) {
+            if (instance.phemexConfig && instance.phemexConfig.apiKey) {
               try {
-                const orderResult = await bybitService.openPosition(
-                  instance.bybitConfig.apiKey,
-                  instance.bybitConfig.apiSecret,
+                const orderResult = await phemexService.openPosition(
+                  instance.phemexConfig.apiKey,
+                  instance.phemexConfig.apiSecret,
                   instance.symbol,
                   "Buy",
                   optimalEntry.adjustedQuantity.toString(),
                   0,
-                  instance.bybitConfig.subaccountId
+                  instance.phemexConfig.subaccountId
                 );
 
-                TradingLogger.logBybitSuccess(
+                TradingLogger.logPhemexSuccess(
                   instanceId,
                   instance.symbol,
                   `${entryType} order placed`,
                   `ID: ${orderResult.result?.orderId}`
                 );
 
-                signal.metadata.bybitOrderId = orderResult.result?.orderId;
-                signal.metadata.bybitOrderLinkId =
+                signal.metadata.phemexOrderId = orderResult.result?.orderId;
+                signal.metadata.phemexOrderLinkId =
                   orderResult.result?.orderLinkId;
                 signal.metadata.contractQuantity =
                   optimalEntry.adjustedQuantity;
                 await signal.save();
               } catch (error) {
-                TradingLogger.logBybitError(
+                TradingLogger.logPhemexError(
                   instanceId,
                   instance.symbol,
                   `${entryType} order placement`,
@@ -618,8 +618,8 @@ class SignalService extends EventEmitter {
 
           if (
             instanceForExit &&
-            instanceForExit.bybitConfig &&
-            instanceForExit.bybitConfig.apiKey
+            instanceForExit.phemexConfig &&
+            instanceForExit.phemexConfig.apiKey
           ) {
             try {
               let totalContractQuantity = 0;
@@ -651,21 +651,21 @@ class SignalService extends EventEmitter {
 
               if (totalContractQuantity === 0) {
                 try {
-                  const positionSize = await bybitService.getPositionSize(
-                    instanceForExit.bybitConfig.apiKey,
-                    instanceForExit.bybitConfig.apiSecret,
+                  const positionSize = await phemexService.getPositionSize(
+                    instanceForExit.phemexConfig.apiKey,
+                    instanceForExit.phemexConfig.apiSecret,
                     instanceForExit.symbol,
-                    instanceForExit.bybitConfig.subaccountId
+                    instanceForExit.phemexConfig.subaccountId
                   );
                   totalContractQuantity = positionSize;
                 } catch (apiError) {
-                  const currentPrice = await bybitService.getCurrentPrice(
+                  const currentPrice = await phemexService.getCurrentPrice(
                     instanceForExit.symbol
                   );
                   const positionValue =
-                    totalEntryAmount * instanceForExit.bybitConfig.leverage;
+                    totalEntryAmount * instanceForExit.phemexConfig.leverage;
                   const instrumentInfo =
-                    await bybitService.getCachedInstrumentInfo(
+                    await phemexService.getCachedInstrumentInfo(
                       instanceForExit.symbol
                     );
                   const theoreticalQuantity = positionValue / currentPrice;
@@ -676,30 +676,30 @@ class SignalService extends EventEmitter {
                 }
               }
 
-              const orderResult = await bybitService.closePosition(
-                instanceForExit.bybitConfig.apiKey,
-                instanceForExit.bybitConfig.apiSecret,
+              const orderResult = await phemexService.closePosition(
+                instanceForExit.phemexConfig.apiKey,
+                instanceForExit.phemexConfig.apiSecret,
                 instanceForExit.symbol,
                 "Buy",
                 totalContractQuantity.toString(),
                 0,
-                instanceForExit.bybitConfig.subaccountId
+                instanceForExit.phemexConfig.subaccountId
               );
 
-              TradingLogger.logBybitSuccess(
+              TradingLogger.logPhemexSuccess(
                 instanceId,
                 instanceForExit.symbol,
                 "Position closed",
                 `Contract: ${totalContractQuantity}`
               );
 
-              exitSignal.metadata.bybitOrderId = orderResult.result?.orderId;
-              exitSignal.metadata.bybitOrderLinkId =
+              exitSignal.metadata.phemexOrderId = orderResult.result?.orderId;
+              exitSignal.metadata.phemexOrderLinkId =
                 orderResult.result?.orderLinkId;
               exitSignal.metadata.contractQuantity = totalContractQuantity;
               await exitSignal.save();
             } catch (error) {
-              TradingLogger.logBybitError(
+              TradingLogger.logPhemexError(
                 instanceId,
                 instanceForExit.symbol,
                 "Position close",
@@ -744,8 +744,8 @@ class SignalService extends EventEmitter {
           const instanceForSync = await Instance.findOne({ instanceId });
           if (
             instanceForSync &&
-            instanceForSync.bybitConfig &&
-            instanceForSync.bybitConfig.apiKey &&
+            instanceForSync.phemexConfig &&
+            instanceForSync.phemexConfig.apiKey &&
             !instanceForSync.testMode
           ) {
             setTimeout(async () => {

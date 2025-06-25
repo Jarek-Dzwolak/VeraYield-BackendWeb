@@ -79,7 +79,14 @@ router.post(
   authMiddleware.isAdmin,
   instanceController.stopAllInstances
 );
+
+// ✅ NOWE ENDPOINTY PHEMEX
+router.put("/:instanceId/phemex-config", instanceController.updatePhemexConfig);
+
+// ❌ DEPRECATED - zachowane dla kompatybilności
 router.put("/:instanceId/bybit-config", instanceController.updateBybitConfig);
+
+// Synchronizacja salda (działa z Phemex)
 router.post(
   "/:instanceId/sync-balance",
   instanceController.syncInstanceBalance
