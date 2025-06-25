@@ -20,9 +20,7 @@ class PhemexService {
    * @returns {string} - Podpis HMAC
    */
   createSignature(queryString, requestBody, expiry, accessToken, secretKey) {
-    const message = queryString + requestBody + expiry + accessToken;
-
-    // 🔍 DEBUGGING PODPISU
+    // 🔍 DEBUGGING PODPISU - oryginalne logi
     console.log("🔐 [PHEMEX] SIGNATURE DEBUG:");
     console.log("  ├── queryString:", JSON.stringify(queryString));
     console.log("  ├── requestBody:", JSON.stringify(requestBody));
@@ -32,11 +30,33 @@ class PhemexService {
       "  ├── secretKey length:",
       secretKey ? secretKey.length : "MISSING"
     );
+
+    // 🔓 DEKODOWANIE BASE64URL SECRET KEY
+    console.log("🔓 [PHEMEX] BASE64URL DECODING:");
+    console.log("  ├── Original secret (base64url):", secretKey);
+
+    // Konwertuj base64url na base64 (zamień _ na / i - na +):
+    let base64String = secretKey.replace(/_/g, "/").replace(/-/g, "+");
+    console.log("  ├── Converted to base64:", base64String);
+
+    // Dodaj padding jeśli potrzebne:
+    while (base64String.length % 4) {
+      base64String += "=";
+    }
+    console.log("  ├── With padding:", base64String);
+
+    // Dekoduj base64:
+    const decodedSecret = Buffer.from(base64String, "base64").toString("utf8");
+    console.log("  ├── Decoded secret:", decodedSecret);
+    console.log("  └── Decoded length:", decodedSecret.length);
+
+    const message = queryString + requestBody + expiry + accessToken;
     console.log("  ├── message string:", JSON.stringify(message));
     console.log("  └── message length:", message.length);
 
+    // UŻYJ ZDEKODOWANEGO SECRETU do HMAC:
     const signature = crypto
-      .createHmac("sha256", secretKey)
+      .createHmac("sha256", decodedSecret) // ⬅️ ZMIANA: używaj decodedSecret
       .update(message)
       .digest("hex");
 
@@ -44,7 +64,6 @@ class PhemexService {
 
     return signature;
   }
-
   /**
    * Wykonuje żądanie do Phemex API
    * @param {string} method - Metoda HTTP
