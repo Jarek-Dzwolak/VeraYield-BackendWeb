@@ -31,38 +31,49 @@ class PhemexService {
       secretKey ? secretKey.length : "MISSING"
     );
 
-    // 🔓 DEKODOWANIE BASE64URL SECRET KEY
-    console.log("🔓 [PHEMEX] BASE64URL DECODING:");
-    console.log("  ├── Original secret (base64url):", secretKey);
-
-    // Konwertuj base64url na base64 (zamień _ na / i - na +):
-    let base64String = secretKey.replace(/_/g, "/").replace(/-/g, "+");
-    console.log("  ├── Converted to base64:", base64String);
-
-    // Dodaj padding jeśli potrzebne:
-    while (base64String.length % 4) {
-      base64String += "=";
-    }
-    console.log("  ├── With padding:", base64String);
-
-    // Dekoduj base64:
-    const decodedSecret = Buffer.from(base64String, "base64").toString("utf8");
-    console.log("  ├── Decoded secret:", decodedSecret);
-    console.log("  └── Decoded length:", decodedSecret.length);
-
     const message = queryString + requestBody + expiry + accessToken;
     console.log("  ├── message string:", JSON.stringify(message));
     console.log("  └── message length:", message.length);
 
-    // UŻYJ ZDEKODOWANEGO SECRETU do HMAC:
-    const signature = crypto
-      .createHmac("sha256", decodedSecret) // ⬅️ ZMIANA: używaj decodedSecret
+    // 🧪 TESTING 3 SECRET FORMATS:
+    console.log("🧪 [PHEMEX] TESTING 3 SECRET FORMATS:");
+
+    // WERSJA 1: RAW SECRET (oryginalny 91-znakowy)
+    const signature1 = crypto
+      .createHmac("sha256", secretKey)
       .update(message)
       .digest("hex");
+    console.log("  ├── V1 (raw secret):", signature1);
 
-    console.log("✅ [PHEMEX] Generated signature:", signature);
+    // WERSJA 2: BASE64URL DECODED jako UTF8
+    let base64String = secretKey.replace(/_/g, "/").replace(/-/g, "+");
+    while (base64String.length % 4) {
+      base64String += "=";
+    }
+    const decodedSecret = Buffer.from(base64String, "base64").toString("utf8");
+    console.log(
+      "  ├── V2 decoded preview:",
+      decodedSecret.substring(0, 20) + "..."
+    );
+    const signature2 = crypto
+      .createHmac("sha256", decodedSecret)
+      .update(message)
+      .digest("hex");
+    console.log("  ├── V2 (base64url utf8):", signature2);
 
-    return signature;
+    // WERSJA 3: BASE64 DECODED jako BINARY (bez toString)
+    const decodedBinary = Buffer.from(base64String, "base64");
+    console.log("  ├── V3 binary length:", decodedBinary.length);
+    const signature3 = crypto
+      .createHmac("sha256", decodedBinary)
+      .update(message)
+      .digest("hex");
+    console.log("  └── V3 (binary decoded):", signature3);
+
+    console.log("✅ [PHEMEX] Using V1 (raw) for this test");
+
+    // ZWRÓĆ WERSJĘ 1 (raw) do testu
+    return signature1;
   }
   /**
    * Wykonuje żądanie do Phemex API
