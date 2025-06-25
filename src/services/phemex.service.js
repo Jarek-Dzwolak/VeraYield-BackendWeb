@@ -20,29 +20,17 @@ class PhemexService {
    * @returns {string} - Podpis HMAC
    */
   createSignature(queryString, requestBody, expiry, accessToken, secretKey) {
-    // STARY BŁĘDNY FORMAT:
-    // const message = queryString + requestBody + expiry + accessToken;
-
-    // ✅ NOWY PRAWIDŁOWY FORMAT:
     const urlPath = "/g-accounts/accountPositions";
     const message = urlPath + queryString + expiry + requestBody;
-
-    console.log("🔐 [PHEMEX] CORRECTED SIGNATURE DEBUG:");
-    console.log("  ├── urlPath:", urlPath);
-    console.log("  ├── queryString:", queryString);
-    console.log("  ├── expiry:", expiry);
-    console.log("  ├── requestBody:", requestBody);
-    console.log("  ├── message string:", JSON.stringify(message));
-    console.log("  └── message length:", message.length);
 
     const signature = crypto
       .createHmac("sha256", secretKey)
       .update(message)
       .digest("hex");
 
-    console.log("✅ [PHEMEX] CORRECTED signature:", signature);
     return signature;
   }
+
   /**
    * Wykonuje żądanie do Phemex API
    * @param {string} method - Metoda HTTP
@@ -83,19 +71,6 @@ class PhemexService {
         "Content-Type": "application/json",
       };
 
-      // 🚀 DEBUGGING ŻĄDANIA
-      console.log("🌐 [PHEMEX] REQUEST DEBUG:");
-      console.log("  ├── Method:", method);
-      console.log("  ├── Base URL:", this.baseUrl);
-      console.log("  ├── Endpoint:", endpoint);
-      console.log("  ├── Query String:", queryString || "EMPTY");
-      console.log("  ├── Request Body:", requestBody || "EMPTY");
-      console.log(
-        "  ├── Full URL:",
-        `${this.baseUrl}${endpoint}${queryString ? "?" + queryString : ""}`
-      );
-      console.log("  └── Headers:", JSON.stringify(headers, null, 2));
-
       let config = {
         method,
         url: `${this.baseUrl}${endpoint}`,
@@ -109,35 +84,8 @@ class PhemexService {
       }
 
       const response = await axios(config);
-
-      // 📨 DEBUGGING ODPOWIEDZI
-      console.log("📨 [PHEMEX] RESPONSE DEBUG:");
-      console.log("  ├── Status:", response.status);
-      console.log("  ├── Status Text:", response.statusText);
-      console.log("  ├── Headers:", JSON.stringify(response.headers, null, 2));
-      console.log("  └── Data:", JSON.stringify(response.data, null, 2));
-
       return response.data;
     } catch (error) {
-      // ❌ DEBUGGING BŁĘDÓW
-      console.log("❌ [PHEMEX] ERROR DEBUG:");
-      console.log("  ├── Error Message:", error.message);
-      console.log("  ├── Response Status:", error.response?.status);
-      console.log(
-        "  ├── Response Headers:",
-        JSON.stringify(error.response?.headers, null, 2)
-      );
-      console.log(
-        "  ├── Response Data:",
-        JSON.stringify(error.response?.data, null, 2)
-      );
-      console.log("  ├── Request URL:", error.config?.url);
-      console.log("  ├── Request Method:", error.config?.method);
-      console.log(
-        "  └── Request Headers:",
-        JSON.stringify(error.config?.headers, null, 2)
-      );
-
       logger.error(`Phemex API error: ${error.message}`);
       if (error.response?.data) {
         logger.error(`Phemex response: ${JSON.stringify(error.response.data)}`);
@@ -155,32 +103,13 @@ class PhemexService {
    */
   async getBalance(apiKey, apiSecret, currency = "USDT") {
     try {
-      logger.info(`[PHEMEX] Getting balance for account...`);
-      logger.info(`[PHEMEX] Request details:`, {
-        url: `${this.baseUrl}/accounts/accountPositions`,
-        apiKey: apiKey ? apiKey.substring(0, 8) + "..." : "MISSING",
-        currency,
-      });
-
       const response = await this.makeRequest(
         "GET",
-        "/g-accounts/accountPositions", // ⬅️ 'g-' dla futures
+        "/g-accounts/accountPositions",
         apiKey,
         apiSecret,
         { currency }
       );
-
-      logger.info(`[PHEMEX] RAW API Response:`, response);
-      logger.info(`[PHEMEX] Response structure analysis:`, {
-        responseCode: response?.code,
-        responseMsg: response?.msg,
-        hasData: !!response?.data,
-        dataKeys: response?.data ? Object.keys(response.data) : null,
-        hasAccount: !!response?.data?.account,
-        accountKeys: response?.data?.account
-          ? Object.keys(response.data.account)
-          : null,
-      });
 
       if (response.code !== 0) {
         logger.error(`[PHEMEX] API Error: ${response.msg}`);
@@ -200,7 +129,7 @@ class PhemexService {
           accountData.accountBalanceRv || "0"
         );
         const usedBalanceRv = parseFloat(accountData.usedBalanceRv || "0");
-        const availBalanceRv = accountBalanceRv - usedBalanceRv; // ⬅️ NOWA KALKULACJA
+        const availBalanceRv = accountBalanceRv - usedBalanceRv;
 
         logger.info(`[PHEMEX] Account Balance: ${accountBalanceRv}`);
         logger.info(`[PHEMEX] Used Balance: ${usedBalanceRv}`);
@@ -212,7 +141,7 @@ class PhemexService {
           result: {
             list: [
               {
-                accountType: "CONTRACT", // Phemex futures account
+                accountType: "CONTRACT",
                 coin: [
                   {
                     coin: currency,
@@ -245,14 +174,6 @@ class PhemexService {
         },
       };
     } catch (error) {
-      logger.error(`[PHEMEX] Full error details:`, {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        stack: error.stack,
-      });
-
       logger.error(`[PHEMEX] Error getting balance: ${error.message}`);
 
       return {
@@ -275,6 +196,7 @@ class PhemexService {
       };
     }
   }
+
   /**
    * Otwiera pozycję na Phemex
    * @param {string} apiKey - Klucz API
@@ -296,12 +218,11 @@ class PhemexService {
     subaccountId = null
   ) {
     try {
-      // Phemex wymaga różnych symboli dla futures (np. BTCUSD -> BTCUSDT)
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
 
       const params = {
         symbol: phemexSymbol,
-        side: side, // "Buy" lub "Sell"
+        side: side,
         orderQty: parseFloat(quantity),
         ordType: "Market",
         timeInForce: "ImmediateOrCancel",
@@ -364,7 +285,7 @@ class PhemexService {
         orderQty: parseFloat(quantity),
         ordType: "Market",
         timeInForce: "ImmediateOrCancel",
-        reduceOnly: true, // Ważne: oznacza zamknięcie pozycji
+        reduceOnly: true,
       };
 
       const response = await this.makeRequest(
@@ -433,8 +354,6 @@ class PhemexService {
    */
   async setMarginMode(apiKey, apiSecret, symbol, tradeMode) {
     try {
-      // Phemex nie ma osobnego endpointu do ustawiania margin mode
-      // Jest zarządzane automatycznie przez system
       logger.info(
         `[PHEMEX] Margin mode management is automatic, skipping manual setting`
       );
@@ -498,7 +417,6 @@ class PhemexService {
         );
 
         if (instrument) {
-          // Phemex używa scaled values
           const qtyScale = instrument.qtyScale || 4;
           const priceScale = instrument.priceScale || 4;
 
@@ -520,9 +438,6 @@ class PhemexService {
         }
       }
 
-      logger.warn(
-        `Nie znaleziono informacji o instrumencie ${symbol}, używam domyślnych wartości`
-      );
       return {
         symbol: symbol,
         minOrderQty: 0.001,
@@ -595,7 +510,6 @@ class PhemexService {
         );
 
         if (position) {
-          // Phemex używa scaled values
           const qtyScale = await this.getQtyScale(phemexSymbol);
           return parseFloat(position.size || "0") / Math.pow(10, qtyScale);
         }
@@ -614,12 +528,10 @@ class PhemexService {
    * @returns {string} - Symbol w formacie Phemex
    */
   convertToPhemexSymbol(symbol) {
-    // Większość symboli jest taka sama, ale można dodać specjalne przypadki
     const symbolMap = {
       BTCUSDT: "BTCUSDT",
       ETHUSDT: "ETHUSDT",
       BNBUSDT: "BNBUSDT",
-      // Dodaj więcej mapowań jeśli potrzebne
     };
 
     return symbolMap[symbol] || symbol;
