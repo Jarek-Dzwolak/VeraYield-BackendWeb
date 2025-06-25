@@ -21,7 +21,28 @@ class PhemexService {
    */
   createSignature(queryString, requestBody, expiry, accessToken, secretKey) {
     const message = queryString + requestBody + expiry + accessToken;
-    return crypto.createHmac("sha256", secretKey).update(message).digest("hex");
+
+    // 🔍 DEBUGGING PODPISU
+    console.log("🔐 [PHEMEX] SIGNATURE DEBUG:");
+    console.log("  ├── queryString:", JSON.stringify(queryString));
+    console.log("  ├── requestBody:", JSON.stringify(requestBody));
+    console.log("  ├── expiry:", expiry);
+    console.log("  ├── accessToken:", accessToken);
+    console.log(
+      "  ├── secretKey length:",
+      secretKey ? secretKey.length : "MISSING"
+    );
+    console.log("  ├── message string:", JSON.stringify(message));
+    console.log("  └── message length:", message.length);
+
+    const signature = crypto
+      .createHmac("sha256", secretKey)
+      .update(message)
+      .digest("hex");
+
+    console.log("✅ [PHEMEX] Generated signature:", signature);
+
+    return signature;
   }
 
   /**
@@ -64,6 +85,19 @@ class PhemexService {
         "Content-Type": "application/json",
       };
 
+      // 🚀 DEBUGGING ŻĄDANIA
+      console.log("🌐 [PHEMEX] REQUEST DEBUG:");
+      console.log("  ├── Method:", method);
+      console.log("  ├── Base URL:", this.baseUrl);
+      console.log("  ├── Endpoint:", endpoint);
+      console.log("  ├── Query String:", queryString || "EMPTY");
+      console.log("  ├── Request Body:", requestBody || "EMPTY");
+      console.log(
+        "  ├── Full URL:",
+        `${this.baseUrl}${endpoint}${queryString ? "?" + queryString : ""}`
+      );
+      console.log("  └── Headers:", JSON.stringify(headers, null, 2));
+
       let config = {
         method,
         url: `${this.baseUrl}${endpoint}`,
@@ -77,8 +111,35 @@ class PhemexService {
       }
 
       const response = await axios(config);
+
+      // 📨 DEBUGGING ODPOWIEDZI
+      console.log("📨 [PHEMEX] RESPONSE DEBUG:");
+      console.log("  ├── Status:", response.status);
+      console.log("  ├── Status Text:", response.statusText);
+      console.log("  ├── Headers:", JSON.stringify(response.headers, null, 2));
+      console.log("  └── Data:", JSON.stringify(response.data, null, 2));
+
       return response.data;
     } catch (error) {
+      // ❌ DEBUGGING BŁĘDÓW
+      console.log("❌ [PHEMEX] ERROR DEBUG:");
+      console.log("  ├── Error Message:", error.message);
+      console.log("  ├── Response Status:", error.response?.status);
+      console.log(
+        "  ├── Response Headers:",
+        JSON.stringify(error.response?.headers, null, 2)
+      );
+      console.log(
+        "  ├── Response Data:",
+        JSON.stringify(error.response?.data, null, 2)
+      );
+      console.log("  ├── Request URL:", error.config?.url);
+      console.log("  ├── Request Method:", error.config?.method);
+      console.log(
+        "  └── Request Headers:",
+        JSON.stringify(error.config?.headers, null, 2)
+      );
+
       logger.error(`Phemex API error: ${error.message}`);
       if (error.response?.data) {
         logger.error(`Phemex response: ${JSON.stringify(error.response.data)}`);
