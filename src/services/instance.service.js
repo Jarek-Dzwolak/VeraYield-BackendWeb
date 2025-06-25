@@ -88,10 +88,6 @@ class InstanceService {
           throw new Error(`Instancja o ID ${instanceId} już istnieje`);
         }
 
-        if (config.phemexConfig) {
-          config.phemexConfig = this._decodeApiKeys(config.phemexConfig);
-        }
-
         const instance = new Instance({
           instanceId,
           name: config.name || `Instancja ${instanceId.substr(0, 6)}`,
@@ -139,8 +135,15 @@ class InstanceService {
           closedPositions: [],
         };
 
+        // Ustaw konfigurację Phemex bez dekodowania - klucze przychodzą jako plain text
         if (config.phemexConfig) {
-          instance.phemexConfig = config.phemexConfig;
+          instance.phemexConfig = {
+            apiKey: config.phemexConfig.apiKey || "",
+            apiSecret: config.phemexConfig.apiSecret || "",
+            leverage: config.phemexConfig.leverage || 3,
+            marginMode: config.phemexConfig.marginMode || "isolated",
+            testnet: config.phemexConfig.testnet !== false,
+          };
         }
 
         await instance.save();
@@ -506,35 +509,6 @@ class InstanceService {
     }
   }
 
-  _decodeApiKeys(phemexConfig) {
-    const decoded = { ...phemexConfig };
-
-    if (decoded.apiKey) {
-      decoded.apiKey = this._tryDecodeBase64(decoded.apiKey);
-    }
-
-    if (decoded.apiSecret) {
-      decoded.apiSecret = this._tryDecodeBase64(decoded.apiSecret);
-    }
-
-    return decoded;
-  }
-
-  _tryDecodeBase64(str) {
-    try {
-      const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-      if (base64Regex.test(str) && str.length > 10) {
-        const decoded = Buffer.from(str, "base64").toString("utf8");
-        if (/^[A-Za-z0-9]+$/.test(decoded)) {
-          return decoded;
-        }
-      }
-    } catch (error) {
-      // Ignoruj błędy dekodowania
-    }
-    return str;
-  }
-
   async updatePhemexConfig(
     instanceId,
     { apiKey, apiSecret, leverage, marginMode, testnet }
@@ -546,16 +520,10 @@ class InstanceService {
           throw new Error("Instance not found");
         }
 
-        const decodedApiKey = apiKey
-          ? this._tryDecodeBase64(apiKey)
-          : instance.phemexConfig?.apiKey;
-        const decodedApiSecret = apiSecret
-          ? this._tryDecodeBase64(apiSecret)
-          : instance.phemexConfig?.apiSecret;
-
+        // Aktualizuj konfigurację Phemex - klucze przychodzą jako plain text
         instance.phemexConfig = {
-          apiKey: decodedApiKey,
-          apiSecret: decodedApiSecret,
+          apiKey: apiKey || "",
+          apiSecret: apiSecret || "",
           leverage: leverage || 3,
           marginMode: marginMode || "isolated",
           testnet: testnet !== false,

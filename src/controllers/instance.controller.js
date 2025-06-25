@@ -108,91 +108,7 @@ const createInstance = async (req, res) => {
       phemexConfig,
     } = req.body;
 
-    // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
-    logger.info("=== DEBUGOWANIE KLUCZY API ===");
-    if (phemexConfig && phemexConfig.apiKey) {
-      logger.info(`Raw received API Key: "${phemexConfig.apiKey}"`);
-      logger.info(`API Key length: ${phemexConfig.apiKey.length}`);
-      logger.info(
-        `API Key first 20 chars: "${phemexConfig.apiKey.substring(0, 20)}"`
-      );
-
-      try {
-        // Sprawdź czy jest to Base64
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(phemexConfig.apiKey);
-        logger.info(`Is API Key Base64: ${isBase64}`);
-
-        if (isBase64 && phemexConfig.apiKey.length > 10) {
-          const decoded = Buffer.from(phemexConfig.apiKey, "base64").toString(
-            "utf8"
-          );
-          logger.info(`Decoded API Key: "${decoded}"`);
-          logger.info(`Decoded API Key length: ${decoded.length}`);
-
-          // Sprawdź czy zawiera tylko alfanumeryczne znaki
-          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
-          logger.info(`Is decoded API Key alphanumeric: ${isAlphanumeric}`);
-
-          if (isAlphanumeric) {
-            phemexConfig.apiKey = decoded;
-            logger.info("✅ API Key successfully decoded and stored");
-          } else {
-            logger.warn(
-              "❌ Decoded API Key contains invalid characters, keeping original"
-            );
-          }
-        } else {
-          logger.info("API Key is not Base64 encoded, keeping as-is");
-        }
-      } catch (error) {
-        logger.error(`Error decoding API Key: ${error.message}`);
-      }
-    }
-
-    if (phemexConfig && phemexConfig.apiSecret) {
-      logger.info(`Raw received API Secret: "${phemexConfig.apiSecret}"`);
-      logger.info(`API Secret length: ${phemexConfig.apiSecret.length}`);
-      logger.info(
-        `API Secret first 20 chars: "${phemexConfig.apiSecret.substring(0, 20)}"`
-      );
-
-      try {
-        // Sprawdź czy jest to Base64
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(phemexConfig.apiSecret);
-        logger.info(`Is API Secret Base64: ${isBase64}`);
-
-        if (isBase64 && phemexConfig.apiSecret.length > 10) {
-          const decoded = Buffer.from(
-            phemexConfig.apiSecret,
-            "base64"
-          ).toString("utf8");
-          logger.info(`Decoded API Secret: "${decoded}"`);
-          logger.info(`Decoded API Secret length: ${decoded.length}`);
-
-          // Sprawdź czy zawiera tylko alfanumeryczne znaki
-          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
-          logger.info(`Is decoded API Secret alphanumeric: ${isAlphanumeric}`);
-
-          if (isAlphanumeric) {
-            phemexConfig.apiSecret = decoded;
-            logger.info("✅ API Secret successfully decoded and stored");
-          } else {
-            logger.warn(
-              "❌ Decoded API Secret contains invalid characters, keeping original"
-            );
-          }
-        } else {
-          logger.info("API Secret is not Base64 encoded, keeping as-is");
-        }
-      } catch (error) {
-        logger.error(`Error decoding API Secret: ${error.message}`);
-      }
-    }
-    logger.info("=== KONIEC DEBUGOWANIA ===");
-
-    // Przygotuj konfigurację instancji
+    // Przygotuj konfigurację instancji - klucze API są już w plain text
     const config = {
       symbol,
       name,
@@ -692,60 +608,6 @@ const updatePhemexConfig = async (req, res) => {
     const { instanceId } = req.params;
     const { apiKey, apiSecret, leverage, marginMode, testnet } = req.body;
 
-    // SZCZEGÓŁOWE DEBUGOWANIE KLUCZY API
-    logger.info("=== DEBUGOWANIE UPDATE PHEMEX KLUCZY ===");
-    let decodedApiKey = apiKey;
-    let decodedApiSecret = apiSecret;
-
-    if (apiKey) {
-      logger.info(`Raw received API Key: "${apiKey}"`);
-      logger.info(`API Key length: ${apiKey.length}`);
-
-      try {
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(apiKey);
-        logger.info(`Is API Key Base64: ${isBase64}`);
-
-        if (isBase64 && apiKey.length > 10) {
-          const decoded = Buffer.from(apiKey, "base64").toString("utf8");
-          logger.info(`Decoded API Key: "${decoded}"`);
-
-          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
-          if (isAlphanumeric) {
-            decodedApiKey = decoded;
-            logger.info("✅ API Key successfully decoded");
-          }
-        }
-      } catch (error) {
-        logger.error(`Error decoding API Key: ${error.message}`);
-      }
-    }
-
-    if (apiSecret) {
-      logger.info(`Raw received API Secret: "${apiSecret}"`);
-      logger.info(`API Secret length: ${apiSecret.length}`);
-
-      try {
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        const isBase64 = base64Regex.test(apiSecret);
-        logger.info(`Is API Secret Base64: ${isBase64}`);
-
-        if (isBase64 && apiSecret.length > 10) {
-          const decoded = Buffer.from(apiSecret, "base64").toString("utf8");
-          logger.info(`Decoded API Secret: "${decoded}"`);
-
-          const isAlphanumeric = /^[A-Za-z0-9]+$/.test(decoded);
-          if (isAlphanumeric) {
-            decodedApiSecret = decoded;
-            logger.info("✅ API Secret successfully decoded");
-          }
-        }
-      } catch (error) {
-        logger.error(`Error decoding API Secret: ${error.message}`);
-      }
-    }
-    logger.info("=== KONIEC UPDATE DEBUGOWANIA ===");
-
     const instance = await Instance.findOne({ instanceId });
 
     if (!instance) {
@@ -755,10 +617,10 @@ const updatePhemexConfig = async (req, res) => {
       });
     }
 
-    // Aktualizuj konfigurację Phemex
+    // Aktualizuj konfigurację Phemex - klucze przychodzą jako plain text
     instance.phemexConfig = {
-      apiKey: decodedApiKey,
-      apiSecret: decodedApiSecret,
+      apiKey: apiKey || "",
+      apiSecret: apiSecret || "",
       leverage: leverage || 3,
       marginMode: marginMode || "isolated",
       testnet: testnet !== false,
