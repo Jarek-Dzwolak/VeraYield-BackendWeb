@@ -161,6 +161,7 @@ class PhemexService {
         apiKey: apiKey ? apiKey.substring(0, 8) + "..." : "MISSING",
         currency,
       });
+
       const response = await this.makeRequest(
         "GET",
         "/g-accounts/accountPositions", // ⬅️ 'g-' dla futures
@@ -180,6 +181,7 @@ class PhemexService {
           ? Object.keys(response.data.account)
           : null,
       });
+
       if (response.code !== 0) {
         logger.error(`[PHEMEX] API Error: ${response.msg}`);
         return {
@@ -193,13 +195,15 @@ class PhemexService {
       const accountData = response.data?.account;
 
       if (accountData) {
-        // Phemex używa scaled values - trzeba przeskalować
+        // Phemex używa scaled values - obliczamy dostępne saldo
         const accountBalanceRv = parseFloat(
           accountData.accountBalanceRv || "0"
         );
-        const availBalanceRv = parseFloat(accountData.availBalanceRv || "0");
+        const usedBalanceRv = parseFloat(accountData.usedBalanceRv || "0");
+        const availBalanceRv = accountBalanceRv - usedBalanceRv; // ⬅️ NOWA KALKULACJA
 
         logger.info(`[PHEMEX] Account Balance: ${accountBalanceRv}`);
+        logger.info(`[PHEMEX] Used Balance: ${usedBalanceRv}`);
         logger.info(`[PHEMEX] Available Balance: ${availBalanceRv}`);
 
         // Zwracamy w formacie kompatybilnym z poprzednim kodem
@@ -250,7 +254,6 @@ class PhemexService {
       });
 
       logger.error(`[PHEMEX] Error getting balance: ${error.message}`);
-      logger.error(`[PHEMEX] Error getting balance: ${error.message}`);
 
       return {
         retCode: -1,
@@ -272,7 +275,6 @@ class PhemexService {
       };
     }
   }
-
   /**
    * Otwiera pozycję na Phemex
    * @param {string} apiKey - Klucz API
