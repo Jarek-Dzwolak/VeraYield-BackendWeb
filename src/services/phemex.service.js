@@ -165,7 +165,7 @@ class PhemexService {
       });
       const response = await this.makeRequest(
         "GET",
-        "/accounts/accountPositions",
+        "/g-accounts/accountPositions", // ⬅️ 'g-' dla futures
         apiKey,
         apiSecret,
         { currency }
