@@ -20,60 +20,28 @@ class PhemexService {
    * @returns {string} - Podpis HMAC
    */
   createSignature(queryString, requestBody, expiry, accessToken, secretKey) {
-    // 🔍 DEBUGGING PODPISU - oryginalne logi
-    console.log("🔐 [PHEMEX] SIGNATURE DEBUG:");
-    console.log("  ├── queryString:", JSON.stringify(queryString));
-    console.log("  ├── requestBody:", JSON.stringify(requestBody));
-    console.log("  ├── expiry:", expiry);
-    console.log("  ├── accessToken:", accessToken);
-    console.log(
-      "  ├── secretKey length:",
-      secretKey ? secretKey.length : "MISSING"
-    );
+    // STARY BŁĘDNY FORMAT:
+    // const message = queryString + requestBody + expiry + accessToken;
 
-    const message = queryString + requestBody + expiry + accessToken;
+    // ✅ NOWY PRAWIDŁOWY FORMAT:
+    const urlPath = "/g-accounts/accountPositions";
+    const message = urlPath + queryString + expiry + requestBody;
+
+    console.log("🔐 [PHEMEX] CORRECTED SIGNATURE DEBUG:");
+    console.log("  ├── urlPath:", urlPath);
+    console.log("  ├── queryString:", queryString);
+    console.log("  ├── expiry:", expiry);
+    console.log("  ├── requestBody:", requestBody);
     console.log("  ├── message string:", JSON.stringify(message));
     console.log("  └── message length:", message.length);
 
-    // 🧪 TESTING 3 SECRET FORMATS:
-    console.log("🧪 [PHEMEX] TESTING 3 SECRET FORMATS:");
-
-    // WERSJA 1: RAW SECRET (oryginalny 91-znakowy)
-    const signature1 = crypto
+    const signature = crypto
       .createHmac("sha256", secretKey)
       .update(message)
       .digest("hex");
-    console.log("  ├── V1 (raw secret):", signature1);
 
-    // WERSJA 2: BASE64URL DECODED jako UTF8
-    let base64String = secretKey.replace(/_/g, "/").replace(/-/g, "+");
-    while (base64String.length % 4) {
-      base64String += "=";
-    }
-    const decodedSecret = Buffer.from(base64String, "base64").toString("utf8");
-    console.log(
-      "  ├── V2 decoded preview:",
-      decodedSecret.substring(0, 20) + "..."
-    );
-    const signature2 = crypto
-      .createHmac("sha256", decodedSecret)
-      .update(message)
-      .digest("hex");
-    console.log("  ├── V2 (base64url utf8):", signature2);
-
-    // WERSJA 3: BASE64 DECODED jako BINARY (bez toString)
-    const decodedBinary = Buffer.from(base64String, "base64");
-    console.log("  ├── V3 binary length:", decodedBinary.length);
-    const signature3 = crypto
-      .createHmac("sha256", decodedBinary)
-      .update(message)
-      .digest("hex");
-    console.log("  └── V3 (binary decoded):", signature3);
-
-    console.log("✅ [PHEMEX] Using V1 (raw) for this test");
-
-    // ZWRÓĆ WERSJĘ 1 (raw) do testu
-    return signature1;
+    console.log("✅ [PHEMEX] CORRECTED signature:", signature);
+    return signature;
   }
   /**
    * Wykonuje żądanie do Phemex API
