@@ -31,28 +31,67 @@ class SignalService extends EventEmitter {
   }
 
   async _adjustContractQuantity(theoreticalQuantity, instrumentInfo) {
+    // 🔍 LOG: Dane wejściowe
+    logger.info(
+      `[QUANTITY ADJUST] Input - Theoretical: ${theoreticalQuantity}`
+    );
+    logger.info(`[QUANTITY ADJUST] Instrument limits:`, {
+      minOrderQty: instrumentInfo?.minOrderQty || "unknown",
+      qtyStep: instrumentInfo?.qtyStep || "unknown",
+    });
+
     if (!instrumentInfo) {
+      logger.warn(`[QUANTITY ADJUST] ⚠️ No instrument info, using defaults`);
       instrumentInfo = {
         minOrderQty: 0.001,
         qtyStep: 0.001,
       };
     }
 
+    // Sprawdź minimum
     if (theoreticalQuantity < instrumentInfo.minOrderQty) {
+      logger.warn(
+        `[QUANTITY ADJUST] ⚠️ Below minimum: ${theoreticalQuantity} < ${instrumentInfo.minOrderQty}`
+      );
+      logger.info(
+        `[QUANTITY ADJUST] Adjusting to minimum: ${instrumentInfo.minOrderQty}`
+      );
       return instrumentInfo.minOrderQty;
     }
 
+    // Dostosuj do kroków
     const steps = Math.floor(theoreticalQuantity / instrumentInfo.qtyStep);
     const adjustedQuantity = steps * instrumentInfo.qtyStep;
 
+    // 🔍 LOG: Obliczenia kroków
+    logger.info(`[QUANTITY ADJUST] Step calculation:`);
+    logger.info(
+      `[QUANTITY ADJUST] Steps: ${theoreticalQuantity} / ${instrumentInfo.qtyStep} = ${steps} (floored)`
+    );
+    logger.info(
+      `[QUANTITY ADJUST] Adjusted: ${steps} * ${instrumentInfo.qtyStep} = ${adjustedQuantity}`
+    );
+
     if (adjustedQuantity < instrumentInfo.minOrderQty) {
+      logger.warn(
+        `[QUANTITY ADJUST] ⚠️ After step adjustment still below minimum`
+      );
+      logger.info(
+        `[QUANTITY ADJUST] Final adjustment to minimum: ${instrumentInfo.minOrderQty}`
+      );
       return instrumentInfo.minOrderQty;
     }
 
     const stepStr = instrumentInfo.qtyStep.toString();
     const precision = stepStr.includes(".") ? stepStr.split(".")[1].length : 0;
+    const finalQuantity = parseFloat(adjustedQuantity.toFixed(precision));
 
-    return parseFloat(adjustedQuantity.toFixed(precision));
+    // 🔍 LOG: Finalne wartości
+    logger.info(
+      `[QUANTITY ADJUST] Final result: ${finalQuantity} (precision: ${precision})`
+    );
+
+    return finalQuantity;
   }
 
   _calculateActualAllocationPercent(

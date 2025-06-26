@@ -220,6 +220,12 @@ class PhemexService {
     try {
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
 
+      // 🔍 LOG: Parametry wejściowe
+      logger.info(
+        `[PHEMEX ORDER] Attempting order: ${symbol} -> ${phemexSymbol}`
+      );
+      logger.info(`[PHEMEX ORDER] Raw quantity: ${quantity}, side: ${side}`);
+
       const params = {
         symbol: phemexSymbol,
         side: side,
@@ -229,6 +235,12 @@ class PhemexService {
         reduceOnly: false,
       };
 
+      // 🔍 LOG: Dokładne parametry wysyłane do API
+      logger.info(
+        `[PHEMEX ORDER] Sending to API:`,
+        JSON.stringify(params, null, 2)
+      );
+
       const response = await this.makeRequest(
         "POST",
         "/orders",
@@ -237,7 +249,16 @@ class PhemexService {
         params
       );
 
+      // 🔍 LOG: Pełna odpowiedź z API
+      logger.info(
+        `[PHEMEX ORDER] Full API response:`,
+        JSON.stringify(response, null, 2)
+      );
+
       if (response.code === 0) {
+        logger.info(
+          `[PHEMEX ORDER] ✅ SUCCESS - Order ID: ${response.data?.orderID}`
+        );
         return {
           result: {
             orderId: response.data?.orderID,
@@ -245,10 +266,28 @@ class PhemexService {
           },
         };
       } else {
+        // 🔴 LOG: Szczegółowy błąd
+        logger.error(`[PHEMEX ORDER] ❌ API ERROR:`);
+        logger.error(`[PHEMEX ORDER] Code: ${response.code}`);
+        logger.error(`[PHEMEX ORDER] Message: ${response.msg}`);
+        logger.error(
+          `[PHEMEX ORDER] Full response:`,
+          JSON.stringify(response, null, 2)
+        );
         throw new Error(response.msg || "Order placement failed");
       }
     } catch (error) {
-      logger.error(`Error opening position: ${error.message}`);
+      // 🔴 LOG: Błąd HTTP/Network
+      logger.error(`[PHEMEX ORDER] ❌ NETWORK ERROR: ${error.message}`);
+      if (error.response?.data) {
+        logger.error(
+          `[PHEMEX ORDER] HTTP Response:`,
+          JSON.stringify(error.response.data, null, 2)
+        );
+      }
+      if (error.response?.status) {
+        logger.error(`[PHEMEX ORDER] HTTP Status: ${error.response.status}`);
+      }
       throw error;
     }
   }
@@ -417,10 +456,24 @@ class PhemexService {
         );
 
         if (instrument) {
+          // 🔍 LOG: Raw instrument data z API
+          logger.info(
+            `[PHEMEX SCALE] Raw instrument data for ${phemexSymbol}:`,
+            {
+              symbol: instrument.symbol,
+              minOrderQty: instrument.minOrderQty,
+              maxOrderQty: instrument.maxOrderQty,
+              lotSize: instrument.lotSize,
+              qtyScale: instrument.qtyScale,
+              priceScale: instrument.priceScale,
+              minOrderValue: instrument.minOrderValue,
+            }
+          );
+
           const qtyScale = instrument.qtyScale || 4;
           const priceScale = instrument.priceScale || 4;
 
-          return {
+          const result = {
             symbol: instrument.symbol,
             minOrderQty:
               parseFloat(instrument.minOrderQty || "0.001") /
@@ -435,9 +488,31 @@ class PhemexService {
             priceScale,
             qtyScale,
           };
+
+          // 🔍 LOG: Przetworzone dane (po scale)
+          logger.info(`[PHEMEX SCALE] Processed instrument data:`, {
+            minOrderQty: result.minOrderQty,
+            qtyStep: result.qtyStep,
+            qtyScale: result.qtyScale,
+            priceScale: result.priceScale,
+            calculation: `Raw ${instrument.minOrderQty} / 10^${qtyScale} = ${result.minOrderQty}`,
+          });
+
+          return result;
+        } else {
+          // 🔴 LOG: Nie znaleziono instrumentu
+          logger.error(
+            `[PHEMEX SCALE] ❌ Instrument ${phemexSymbol} not found in products list`
+          );
+          logger.error(
+            `[PHEMEX SCALE] Available symbols:`,
+            response.data.data.products.slice(0, 5).map((p) => p.symbol)
+          );
         }
       }
 
+      // Fallback
+      logger.warn(`[PHEMEX SCALE] ⚠️ Using fallback values for ${symbol}`);
       return {
         symbol: symbol,
         minOrderQty: 0.001,
@@ -448,7 +523,10 @@ class PhemexService {
         qtyScale: 4,
       };
     } catch (error) {
-      logger.error(`Error fetching instrument info: ${error.message}`);
+      logger.error(
+        `[PHEMEX SCALE] ❌ Error fetching instrument info: ${error.message}`
+      );
+      // Zwróć fallback values
       return {
         symbol: symbol,
         minOrderQty: 0.001,
@@ -460,7 +538,6 @@ class PhemexService {
       };
     }
   }
-
   /**
    * Pobiera informacje o instrumencie z cache
    * @param {string} symbol - Symbol instrumentu
@@ -528,13 +605,26 @@ class PhemexService {
    * @returns {string} - Symbol w formacie Phemex
    */
   convertToPhemexSymbol(symbol) {
+    // 🔍 LOG: Konwersja symbolu
+    logger.info(`[PHEMEX SYMBOL] Converting: ${symbol}`);
+
     const symbolMap = {
       BTCUSDT: "BTCUSDT",
       ETHUSDT: "ETHUSDT",
       BNBUSDT: "BNBUSDT",
     };
 
-    return symbolMap[symbol] || symbol;
+    const result = symbolMap[symbol] || symbol;
+
+    if (symbolMap[symbol]) {
+      logger.info(`[PHEMEX SYMBOL] ✅ Mapped: ${symbol} -> ${result}`);
+    } else {
+      logger.warn(
+        `[PHEMEX SYMBOL] ⚠️ No mapping found, using original: ${symbol}`
+      );
+    }
+
+    return result;
   }
 
   /**
