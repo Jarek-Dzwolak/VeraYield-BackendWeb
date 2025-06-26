@@ -414,27 +414,90 @@ class PhemexService {
    */
   async getCurrentPrice(symbol) {
     try {
-      const phemexSymbol = this.convertToPhemexSymbol(symbol);
+      logger.info(`[PHEMEX PRICE] === GETTING CURRENT PRICE ===`);
+      logger.info(`[PHEMEX PRICE] Input symbol: ${symbol}`);
 
-      const response = await axios.get(`${this.baseUrl}/md/ticker/24hr`, {
-        params: {
-          symbol: phemexSymbol,
-        },
-      });
+      const phemexSymbol = this.convertToPhemexSymbol(symbol);
+      logger.info(`[PHEMEX PRICE] Converted symbol: ${phemexSymbol}`);
+
+      // 🔍 LOG: Dokładny URL i parametry
+      const url = `${this.baseUrl}/md/ticker/24hr`;
+      const params = { symbol: phemexSymbol };
+
+      logger.info(`[PHEMEX PRICE] Full URL: ${url}`);
+      logger.info(`[PHEMEX PRICE] Params:`, JSON.stringify(params, null, 2));
+      logger.info(`[PHEMEX PRICE] Base URL: ${this.baseUrl}`);
+
+      let response;
+      try {
+        response = await axios.get(url, { params });
+
+        // 🔍 LOG: Sukces HTTP
+        logger.info(`[PHEMEX PRICE] HTTP Status: ${response.status}`);
+        logger.info(
+          `[PHEMEX PRICE] Response headers:`,
+          JSON.stringify(response.headers, null, 2)
+        );
+      } catch (httpError) {
+        // 🔴 LOG: Błąd HTTP
+        logger.error(`[PHEMEX PRICE] ❌ HTTP ERROR:`);
+        logger.error(`[PHEMEX PRICE] Status: ${httpError.response?.status}`);
+        logger.error(
+          `[PHEMEX PRICE] Status text: ${httpError.response?.statusText}`
+        );
+        logger.error(
+          `[PHEMEX PRICE] Response data:`,
+          JSON.stringify(httpError.response?.data, null, 2)
+        );
+        logger.error(`[PHEMEX PRICE] Request config:`, {
+          url: httpError.config?.url,
+          method: httpError.config?.method,
+          params: httpError.config?.params,
+        });
+        throw httpError;
+      }
+
+      // 🔍 LOG: Response body
+      logger.info(
+        `[PHEMEX PRICE] Response body:`,
+        JSON.stringify(response.data, null, 2)
+      );
 
       if (response.data.code === 0 && response.data.result?.length > 0) {
         const ticker = response.data.result[0];
+        logger.info(`[PHEMEX PRICE] Ticker data:`, {
+          lastPx: ticker.lastPx,
+          markPx: ticker.markPx,
+          indexPx: ticker.indexPx,
+        });
 
-        // Phemex używa scaled pricing - trzeba przeskalować
         const priceScale = await this.getPriceScale(phemexSymbol);
+        logger.info(`[PHEMEX PRICE] Price scale: ${priceScale}`);
+
         const lastPrice = parseFloat(ticker.lastPx) / Math.pow(10, priceScale);
+        logger.info(
+          `[PHEMEX PRICE] ✅ Final price: ${lastPrice} (raw: ${ticker.lastPx}, scale: ${priceScale})`
+        );
 
         return lastPrice;
-      }
+      } else {
+        // 🔴 LOG: Nieprawidłowa odpowiedź API
+        logger.error(`[PHEMEX PRICE] ❌ Invalid API response:`);
+        logger.error(`[PHEMEX PRICE] Code: ${response.data.code}`);
+        logger.error(`[PHEMEX PRICE] Message: ${response.data.msg}`);
+        logger.error(
+          `[PHEMEX PRICE] Result length: ${response.data.result?.length || 0}`
+        );
 
-      throw new Error("Unable to fetch price from Phemex");
+        throw new Error(
+          `Phemex API error: ${response.data.msg || "Invalid response"}`
+        );
+      }
     } catch (error) {
-      logger.error(`Error fetching Phemex price: ${error.message}`);
+      logger.error(`[PHEMEX PRICE] ❌ GENERAL ERROR: ${error.message}`);
+      if (error.stack) {
+        logger.error(`[PHEMEX PRICE] Stack trace: ${error.stack}`);
+      }
       throw error;
     }
   }
@@ -446,29 +509,53 @@ class PhemexService {
    */
   async getInstrumentInfo(symbol) {
     try {
-      const phemexSymbol = this.convertToPhemexSymbol(symbol);
+      logger.info(`[PHEMEX INSTRUMENT] === GETTING INSTRUMENT INFO ===`);
+      logger.info(`[PHEMEX INSTRUMENT] Input symbol: ${symbol}`);
 
-      const response = await axios.get(`${this.baseUrl}/public/products`);
+      const phemexSymbol = this.convertToPhemexSymbol(symbol);
+      logger.info(`[PHEMEX INSTRUMENT] Phemex symbol: ${phemexSymbol}`);
+
+      const url = `${this.baseUrl}/public/products`;
+      logger.info(`[PHEMEX INSTRUMENT] Request URL: ${url}`);
+
+      let response;
+      try {
+        response = await axios.get(url);
+        logger.info(`[PHEMEX INSTRUMENT] HTTP Status: ${response.status}`);
+      } catch (httpError) {
+        logger.error(`[PHEMEX INSTRUMENT] ❌ HTTP ERROR: ${httpError.message}`);
+        logger.error(
+          `[PHEMEX INSTRUMENT] Status: ${httpError.response?.status}`
+        );
+        logger.error(
+          `[PHEMEX INSTRUMENT] Response:`,
+          JSON.stringify(httpError.response?.data, null, 2)
+        );
+        throw httpError;
+      }
+
+      logger.info(`[PHEMEX INSTRUMENT] Response code: ${response.data.code}`);
 
       if (response.data.code === 0 && response.data.data?.products) {
-        const instrument = response.data.data.products.find(
-          (p) => p.symbol === phemexSymbol
+        const products = response.data.data.products;
+        logger.info(
+          `[PHEMEX INSTRUMENT] Total products found: ${products.length}`
         );
+
+        const instrument = products.find((p) => p.symbol === phemexSymbol);
+        logger.info(`[PHEMEX INSTRUMENT] Instrument found: ${!!instrument}`);
 
         if (instrument) {
           // 🔍 LOG: Raw instrument data z API
-          logger.info(
-            `[PHEMEX SCALE] Raw instrument data for ${phemexSymbol}:`,
-            {
-              symbol: instrument.symbol,
-              minOrderQty: instrument.minOrderQty,
-              maxOrderQty: instrument.maxOrderQty,
-              lotSize: instrument.lotSize,
-              qtyScale: instrument.qtyScale,
-              priceScale: instrument.priceScale,
-              minOrderValue: instrument.minOrderValue,
-            }
-          );
+          logger.info(`[PHEMEX INSTRUMENT] Raw instrument data:`, {
+            symbol: instrument.symbol,
+            minOrderQty: instrument.minOrderQty,
+            maxOrderQty: instrument.maxOrderQty,
+            lotSize: instrument.lotSize,
+            qtyScale: instrument.qtyScale,
+            priceScale: instrument.priceScale,
+            minOrderValue: instrument.minOrderValue,
+          });
 
           const qtyScale = instrument.qtyScale || 4;
           const priceScale = instrument.priceScale || 4;
@@ -490,7 +577,7 @@ class PhemexService {
           };
 
           // 🔍 LOG: Przetworzone dane (po scale)
-          logger.info(`[PHEMEX SCALE] Processed instrument data:`, {
+          logger.info(`[PHEMEX INSTRUMENT] ✅ Processed result:`, {
             minOrderQty: result.minOrderQty,
             qtyStep: result.qtyStep,
             qtyScale: result.qtyScale,
@@ -502,18 +589,22 @@ class PhemexService {
         } else {
           // 🔴 LOG: Nie znaleziono instrumentu
           logger.error(
-            `[PHEMEX SCALE] ❌ Instrument ${phemexSymbol} not found in products list`
+            `[PHEMEX INSTRUMENT] ❌ Instrument ${phemexSymbol} not found`
           );
-          logger.error(
-            `[PHEMEX SCALE] Available symbols:`,
-            response.data.data.products.slice(0, 5).map((p) => p.symbol)
+          logger.info(
+            `[PHEMEX INSTRUMENT] Available symbols (first 10):`,
+            products.slice(0, 10).map((p) => p.symbol)
           );
         }
+      } else {
+        logger.error(`[PHEMEX INSTRUMENT] ❌ Invalid API response`);
+        logger.error(`[PHEMEX INSTRUMENT] Code: ${response.data.code}`);
+        logger.error(`[PHEMEX INSTRUMENT] Message: ${response.data.msg}`);
       }
 
       // Fallback
-      logger.warn(`[PHEMEX SCALE] ⚠️ Using fallback values for ${symbol}`);
-      return {
+      logger.warn(`[PHEMEX INSTRUMENT] ⚠️ Using fallback values for ${symbol}`);
+      const fallback = {
         symbol: symbol,
         minOrderQty: 0.001,
         maxOrderQty: 1000000,
@@ -522,12 +613,11 @@ class PhemexService {
         priceScale: 4,
         qtyScale: 4,
       };
+      logger.info(`[PHEMEX INSTRUMENT] Fallback values:`, fallback);
+      return fallback;
     } catch (error) {
-      logger.error(
-        `[PHEMEX SCALE] ❌ Error fetching instrument info: ${error.message}`
-      );
-      // Zwróć fallback values
-      return {
+      logger.error(`[PHEMEX INSTRUMENT] ❌ GENERAL ERROR: ${error.message}`);
+      const fallback = {
         symbol: symbol,
         minOrderQty: 0.001,
         maxOrderQty: 1000000,
@@ -536,8 +626,11 @@ class PhemexService {
         priceScale: 4,
         qtyScale: 4,
       };
+      logger.info(`[PHEMEX INSTRUMENT] Error fallback values:`, fallback);
+      return fallback;
     }
   }
+
   /**
    * Pobiera informacje o instrumencie z cache
    * @param {string} symbol - Symbol instrumentu
@@ -633,22 +726,67 @@ class PhemexService {
    * @returns {Promise<number>} - Scale dla ceny
    */
   async getPriceScale(symbol) {
-    const cached = this.scaleCache.get(`${symbol}_price`);
-    if (cached && Date.now() - cached.timestamp < this.instrumentCacheExpiry) {
-      return cached.scale;
+    try {
+      logger.info(`[PHEMEX SCALE] === GETTING PRICE SCALE ===`);
+      logger.info(`[PHEMEX SCALE] Symbol: ${symbol}`);
+
+      const cached = this.scaleCache.get(`${symbol}_price`);
+      if (
+        cached &&
+        Date.now() - cached.timestamp < this.instrumentCacheExpiry
+      ) {
+        logger.info(
+          `[PHEMEX SCALE] ✅ Using cached price scale: ${cached.scale}`
+        );
+        logger.info(
+          `[PHEMEX SCALE] Cache timestamp: ${new Date(cached.timestamp).toISOString()}`
+        );
+        return cached.scale;
+      }
+
+      logger.info(
+        `[PHEMEX SCALE] Cache miss, fetching fresh instrument info...`
+      );
+      logger.info(
+        `[PHEMEX SCALE] Cache expiry time: ${this.instrumentCacheExpiry}ms`
+      );
+
+      let instrumentInfo;
+      try {
+        instrumentInfo = await this.getInstrumentInfo(symbol);
+        logger.info(`[PHEMEX SCALE] Instrument info received:`, {
+          symbol: instrumentInfo.symbol,
+          priceScale: instrumentInfo.priceScale,
+          qtyScale: instrumentInfo.qtyScale,
+          minOrderQty: instrumentInfo.minOrderQty,
+        });
+      } catch (instrumentError) {
+        logger.error(
+          `[PHEMEX SCALE] ❌ Error getting instrument info: ${instrumentError.message}`
+        );
+        logger.info(`[PHEMEX SCALE] Using fallback price scale: 4`);
+        return 4;
+      }
+
+      const scale = instrumentInfo.priceScale || 4;
+      logger.info(
+        `[PHEMEX SCALE] ✅ Price scale result: ${scale} (fallback: ${!instrumentInfo.priceScale})`
+      );
+
+      // Cache the result
+      this.scaleCache.set(`${symbol}_price`, {
+        scale,
+        timestamp: Date.now(),
+      });
+
+      logger.info(`[PHEMEX SCALE] Cached price scale for future use`);
+      return scale;
+    } catch (error) {
+      logger.error(`[PHEMEX SCALE] ❌ GENERAL ERROR: ${error.message}`);
+      logger.error(`[PHEMEX SCALE] Using fallback price scale: 4`);
+      return 4;
     }
-
-    const instrumentInfo = await this.getInstrumentInfo(symbol);
-    const scale = instrumentInfo.priceScale || 4;
-
-    this.scaleCache.set(`${symbol}_price`, {
-      scale,
-      timestamp: Date.now(),
-    });
-
-    return scale;
   }
-
   /**
    * Pobiera scale dla quantity instrumentu
    * @param {string} symbol - Symbol instrumentu
