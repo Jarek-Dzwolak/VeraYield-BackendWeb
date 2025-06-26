@@ -204,7 +204,7 @@ class PhemexService {
    * @param {string} symbol - Symbol instrumentu
    * @param {string} side - Strona (Buy/Sell)
    * @param {string} quantity - Wielkość pozycji
-   * @param {number} positionIdx - Indeks pozycji (nie używany w Phemex)
+   * @param {number} positionIdx - Indeks pozycji (nie używany)
    * @param {string} subaccountId - ID subkonta (nie używany)
    * @returns {Promise<Object>} - Odpowiedź z API
    */
@@ -221,44 +221,54 @@ class PhemexService {
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
 
       // 🔍 LOG: Parametry wejściowe
-      logger.info(
-        `[PHEMEX ORDER] Attempting order: ${symbol} -> ${phemexSymbol}`
-      );
-      logger.info(`[PHEMEX ORDER] Raw quantity: ${quantity}, side: ${side}`);
+      logger.info(`[PHEMEX ORDER] === MARKET ORDER ===`);
+      logger.info(`[PHEMEX ORDER] Symbol: ${symbol} -> ${phemexSymbol}`);
+      logger.info(`[PHEMEX ORDER] Side: ${side}, Quantity: ${quantity}`);
 
+      // ✅ POPRAWNE PARAMETRY dla Phemex futures
       const params = {
-        symbol: phemexSymbol,
-        side: side,
-        orderQty: parseFloat(quantity),
-        ordType: "Market",
-        timeInForce: "ImmediateOrCancel",
-        reduceOnly: false,
+        clOrdID: `order-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, // Unikalny ID
+        symbol: phemexSymbol, // BTCUSDT (bez prefiksu)
+        side: side, // "Buy" lub "Sell"
+        orderQtyRq: quantity, // ← orderQtyRq zamiast orderQty!
+        ordType: "Market", // Market order
+        timeInForce: "ImmediateOrCancel", // IOC dla market
+        posSide: side === "Buy" ? "Long" : "Short", // ← Long/Short pozycja
       };
 
-      // 🔍 LOG: Dokładne parametry wysyłane do API
+      // 🔍 LOG: Dokładne parametry do API
       logger.info(
-        `[PHEMEX ORDER] Sending to API:`,
+        `[PHEMEX ORDER] Request params:`,
         JSON.stringify(params, null, 2)
       );
+      logger.info(`[PHEMEX ORDER] Endpoint: POST ${this.baseUrl}/g-orders`);
 
+      // ✅ POPRAWNY ENDPOINT: /g-orders
       const response = await this.makeRequest(
         "POST",
-        "/orders",
+        "/g-orders",
         apiKey,
         apiSecret,
         params
       );
 
-      // 🔍 LOG: Pełna odpowiedź z API
+      // 🔍 LOG: Pełna odpowiedź
       logger.info(
-        `[PHEMEX ORDER] Full API response:`,
+        `[PHEMEX ORDER] Full response:`,
         JSON.stringify(response, null, 2)
       );
 
       if (response.code === 0) {
-        logger.info(
-          `[PHEMEX ORDER] ✅ SUCCESS - Order ID: ${response.data?.orderID}`
-        );
+        logger.info(`[PHEMEX ORDER] ✅ SUCCESS - Order placed`);
+        logger.info(`[PHEMEX ORDER] Order details:`, {
+          orderID: response.data?.orderID,
+          clOrdID: response.data?.clOrdID,
+          symbol: response.data?.symbol,
+          side: response.data?.side,
+          orderQtyRq: response.data?.orderQtyRq,
+          ordStatus: response.data?.ordStatus,
+        });
+
         return {
           result: {
             orderId: response.data?.orderID,
@@ -266,12 +276,12 @@ class PhemexService {
           },
         };
       } else {
-        // 🔴 LOG: Szczegółowy błąd
+        // 🔴 LOG: Błąd API
         logger.error(`[PHEMEX ORDER] ❌ API ERROR:`);
         logger.error(`[PHEMEX ORDER] Code: ${response.code}`);
         logger.error(`[PHEMEX ORDER] Message: ${response.msg}`);
         logger.error(
-          `[PHEMEX ORDER] Full response:`,
+          `[PHEMEX ORDER] Full error:`,
           JSON.stringify(response, null, 2)
         );
         throw new Error(response.msg || "Order placement failed");
@@ -698,28 +708,20 @@ class PhemexService {
    * @returns {string} - Symbol w formacie Phemex
    */
   convertToPhemexSymbol(symbol) {
-    // 🔍 LOG: Konwersja symbolu
     logger.info(`[PHEMEX SYMBOL] Converting: ${symbol}`);
 
+    // ✅ FUTURES - bez prefiksu 's', z USDT
     const symbolMap = {
-      BTCUSDT: "BTCUSDT",
+      BTCUSDT: "BTCUSDT", // ← Zostaw jak jest dla futures
       ETHUSDT: "ETHUSDT",
       BNBUSDT: "BNBUSDT",
     };
 
     const result = symbolMap[symbol] || symbol;
 
-    if (symbolMap[symbol]) {
-      logger.info(`[PHEMEX SYMBOL] ✅ Mapped: ${symbol} -> ${result}`);
-    } else {
-      logger.warn(
-        `[PHEMEX SYMBOL] ⚠️ No mapping found, using original: ${symbol}`
-      );
-    }
-
+    logger.info(`[PHEMEX SYMBOL] ✅ Futures symbol: ${symbol} -> ${result}`);
     return result;
   }
-
   /**
    * Pobiera scale dla ceny instrumentu
    * @param {string} symbol - Symbol instrumentu
