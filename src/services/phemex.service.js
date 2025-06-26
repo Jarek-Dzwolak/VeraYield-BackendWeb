@@ -424,37 +424,94 @@ class PhemexService {
    */
   async getCurrentPrice(symbol) {
     try {
-      logger.info(`[PHEMEX PRICE] === USING FALLBACK PRICE FOR TESTING ===`);
-      logger.info(`[PHEMEX PRICE] Symbol: ${symbol}`);
+      logger.info(`[PHEMEX PRICE] === GETTING REAL MARKET PRICE ===`);
+      logger.info(`[PHEMEX PRICE] Input symbol: ${symbol}`);
 
-      // 🔧 AKTUALNE CENY jako fallback dla testów
-      const fallbackPrices = {
-        BTCUSDT: 107000, // ✅ Aktualna cena BTC ~107k
-        ETHUSDT: 3900, // ✅ Aktualna cena ETH ~3.9k
-        BNBUSDT: 700, // ✅ Aktualna cena BNB ~700
-      };
+      const phemexSymbol = this.convertToPhemexSymbol(symbol);
+      logger.info(`[PHEMEX PRICE] Phemex symbol: ${phemexSymbol}`);
 
-      const fallbackPrice = fallbackPrices[symbol] || 107000;
+      // ✅ PRAWIDŁOWY ENDPOINT: /md/v3/ticker/24hr
+      const url = `${this.baseUrl}/md/v3/ticker/24hr`;
+      const params = { symbol: phemexSymbol };
 
+      logger.info(`[PHEMEX PRICE] Request URL: ${url}`);
+      logger.info(`[PHEMEX PRICE] Params:`, JSON.stringify(params, null, 2));
+
+      let response;
+      try {
+        response = await axios.get(url, { params });
+        logger.info(`[PHEMEX PRICE] HTTP Status: ${response.status}`);
+      } catch (httpError) {
+        logger.error(`[PHEMEX PRICE] ❌ HTTP ERROR:`);
+        logger.error(`[PHEMEX PRICE] Status: ${httpError.response?.status}`);
+        logger.error(
+          `[PHEMEX PRICE] Status text: ${httpError.response?.statusText}`
+        );
+        logger.error(
+          `[PHEMEX PRICE] Response data:`,
+          JSON.stringify(httpError.response?.data, null, 2)
+        );
+        throw httpError;
+      }
+
+      // 🔍 LOG: Response body
       logger.info(
-        `[PHEMEX PRICE] ✅ Using current fallback price: ${fallbackPrice} for ${symbol}`
-      );
-      logger.warn(
-        `[PHEMEX PRICE] ⚠️ Market data endpoint not working - using realistic static price for testing`
+        `[PHEMEX PRICE] Response body:`,
+        JSON.stringify(response.data, null, 2)
       );
 
-      return fallbackPrice;
+      if (response.data.code === 0 && response.data.result) {
+        const ticker = response.data.result;
+        logger.info(`[PHEMEX PRICE] Ticker data:`, {
+          lastPx: ticker.lastPx,
+          markPx: ticker.markPx,
+          indexPx: ticker.indexPx,
+          close: ticker.close,
+          last: ticker.last,
+          price: ticker.price,
+        });
+
+        // Znajdź cenę w różnych polach
+        const rawPrice =
+          ticker.lastPx ||
+          ticker.last ||
+          ticker.price ||
+          ticker.close ||
+          ticker.markPx;
+        logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
+
+        if (rawPrice) {
+          const priceScale = await this.getPriceScale(phemexSymbol);
+          logger.info(`[PHEMEX PRICE] Price scale: ${priceScale}`);
+
+          const finalPrice = parseFloat(rawPrice) / Math.pow(10, priceScale);
+          logger.info(
+            `[PHEMEX PRICE] ✅ REAL MARKET PRICE: ${finalPrice} (raw: ${rawPrice}, scale: ${priceScale})`
+          );
+
+          return finalPrice;
+        } else {
+          logger.error(`[PHEMEX PRICE] ❌ No price field found in ticker`);
+          throw new Error("No price data in ticker response");
+        }
+      } else {
+        logger.error(`[PHEMEX PRICE] ❌ Invalid API response:`);
+        logger.error(`[PHEMEX PRICE] Code: ${response.data.code}`);
+        logger.error(`[PHEMEX PRICE] Message: ${response.data.msg}`);
+        throw new Error(
+          `Phemex API error: ${response.data.msg || "Invalid response"}`
+        );
+      }
     } catch (error) {
-      logger.error(`[PHEMEX PRICE] ❌ ERROR: ${error.message}`);
-
-      // Emergency fallback
-      const emergencyPrice = 107000;
-      logger.warn(
-        `[PHEMEX PRICE] ⚠️ Using emergency fallback: ${emergencyPrice}`
-      );
-      return emergencyPrice;
+      logger.error(`[PHEMEX PRICE] ❌ GENERAL ERROR: ${error.message}`);
+      if (error.stack) {
+        logger.error(`[PHEMEX PRICE] Stack trace: ${error.stack}`);
+      }
+      // ❌ NIE MA FALLBACK - aplikacja musi dostać prawdziwą cenę!
+      throw error;
     }
   }
+
   /**
    * Pobiera informacje o instrumencie
    * @param {string} symbol - Symbol instrumentu
