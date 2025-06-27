@@ -442,13 +442,10 @@ class PhemexService {
         response = await axios.get(url, { params });
         logger.info(`[PHEMEX PRICE] HTTP Status: ${response.status}`);
       } catch (httpError) {
-        logger.error(`[PHEMEX PRICE] ❌ HTTP ERROR:`);
+        logger.error(`[PHEMEX PRICE] ❌ HTTP ERROR: ${httpError.message}`);
         logger.error(`[PHEMEX PRICE] Status: ${httpError.response?.status}`);
         logger.error(
-          `[PHEMEX PRICE] Status text: ${httpError.response?.statusText}`
-        );
-        logger.error(
-          `[PHEMEX PRICE] Response data:`,
+          `[PHEMEX PRICE] Response:`,
           JSON.stringify(httpError.response?.data, null, 2)
         );
         throw httpError;
@@ -551,7 +548,6 @@ class PhemexService {
       throw error;
     }
   }
-
   /**
    * Pobiera informacje o instrumencie
    * @param {string} symbol - Symbol instrumentu
