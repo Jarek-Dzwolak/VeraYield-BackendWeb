@@ -32,7 +32,6 @@ class SignalService extends EventEmitter {
 
   async _adjustContractQuantity(theoreticalQuantity, instrumentInfo) {
     if (!instrumentInfo) {
-      logger.warn(`[QUANTITY ADJUST] ⚠️ No instrument info, using defaults`);
       instrumentInfo = {
         minOrderQty: 0.001,
         qtyStep: 0.001,
@@ -41,11 +40,9 @@ class SignalService extends EventEmitter {
 
     // Sprawdź minimum
     if (theoreticalQuantity < instrumentInfo.minOrderQty) {
-      logger.warn(
-        `[QUANTITY ADJUST] ⚠️ Below minimum: ${theoreticalQuantity} < ${instrumentInfo.minOrderQty}`
-      );
+      // ✅ LOG przed pierwszym return:
       logger.info(
-        `[QUANTITY ADJUST] Adjusting to minimum: ${instrumentInfo.minOrderQty}`
+        `[QUANTITY] ${theoreticalQuantity.toFixed(6)} -> ${instrumentInfo.minOrderQty} BTC (below minimum)`
       );
       return instrumentInfo.minOrderQty;
     }
@@ -55,21 +52,22 @@ class SignalService extends EventEmitter {
     const adjustedQuantity = steps * instrumentInfo.qtyStep;
 
     if (adjustedQuantity < instrumentInfo.minOrderQty) {
-      logger.warn(
-        `[QUANTITY ADJUST] ⚠️ After step adjustment still below minimum`
-      );
+      // ✅ LOG przed drugim return:
       logger.info(
-        `[QUANTITY ADJUST] Final adjustment to minimum: ${instrumentInfo.minOrderQty}`
+        `[QUANTITY] ${theoreticalQuantity.toFixed(6)} -> ${instrumentInfo.minOrderQty} BTC (step adjusted, but below minimum)`
       );
       return instrumentInfo.minOrderQty;
     }
+
     const stepStr = instrumentInfo.qtyStep.toString();
     const precision = stepStr.includes(".") ? stepStr.split(".")[1].length : 0;
     const finalQuantity = parseFloat(adjustedQuantity.toFixed(precision));
 
+    // ✅ LOG przed trzecim return:
     logger.info(
       `[QUANTITY] ${theoreticalQuantity.toFixed(6)} -> ${finalQuantity} BTC (step adjusted)`
     );
+
     return finalQuantity;
   }
 
