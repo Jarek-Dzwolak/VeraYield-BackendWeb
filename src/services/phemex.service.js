@@ -229,11 +229,6 @@ class PhemexService {
     try {
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
 
-      // 🔍 LOG: Parametry wejściowe
-      logger.info(`[PHEMEX ORDER] === MARKET ORDER ===`);
-      logger.info(`[PHEMEX ORDER] Symbol: ${symbol} -> ${phemexSymbol}`);
-      logger.info(`[PHEMEX ORDER] Side: ${side}, Quantity: ${quantity}`);
-
       // ✅ POPRAWNE PARAMETRY dla Phemex futures
       const params = {
         clOrdID: `order-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, // Unikalny ID
@@ -245,13 +240,6 @@ class PhemexService {
         posSide: side === "Buy" ? "Long" : "Short", // ← Long/Short pozycja
       };
 
-      // 🔍 LOG: Dokładne parametry do API
-      logger.info(
-        `[PHEMEX ORDER] Request params:`,
-        JSON.stringify(params, null, 2)
-      );
-      logger.info(`[PHEMEX ORDER] Endpoint: POST ${this.baseUrl}/g-orders`);
-
       // ✅ POPRAWNY ENDPOINT: /g-orders
       const response = await this.makeRequest(
         "POST",
@@ -261,23 +249,10 @@ class PhemexService {
         params
       );
 
-      // 🔍 LOG: Pełna odpowiedź
-      logger.info(
-        `[PHEMEX ORDER] Full response:`,
-        JSON.stringify(response, null, 2)
-      );
-
       if (response.code === 0) {
-        logger.info(`[PHEMEX ORDER] ✅ SUCCESS - Order placed`);
-        logger.info(`[PHEMEX ORDER] Order details:`, {
-          orderID: response.data?.orderID,
-          clOrdID: response.data?.clOrdID,
-          symbol: response.data?.symbol,
-          side: response.data?.side,
-          orderQtyRq: response.data?.orderQtyRq,
-          ordStatus: response.data?.ordStatus,
-        });
-
+        logger.info(
+          `[PHEMEX] Order placed: ${side} ${quantity} BTC | ID: ${response.data?.orderID}`
+        );
         return {
           result: {
             orderId: response.data?.orderID,
@@ -433,12 +408,9 @@ class PhemexService {
    */
   async getCurrentPrice(symbol) {
     try {
-      logger.info(`[PHEMEX PRICE] Getting price for ${symbol}`);
-
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
       const url = `${this.baseUrl}/md/v3/ticker/24hr`;
       const params = { symbol: phemexSymbol };
-
       const response = await axios.get(url, { params });
 
       if (response.data && response.data.result) {
@@ -668,20 +640,16 @@ class PhemexService {
    * @returns {string} - Symbol w formacie Phemex
    */
   convertToPhemexSymbol(symbol) {
-    logger.info(`[PHEMEX SYMBOL] Converting: ${symbol}`);
-
     // ✅ FUTURES - bez prefiksu 's', z USDT
     const symbolMap = {
       BTCUSDT: "BTCUSDT", // ← Zostaw jak jest dla futures
       ETHUSDT: "ETHUSDT",
       BNBUSDT: "BNBUSDT",
     };
-
     const result = symbolMap[symbol] || symbol;
-
-    logger.info(`[PHEMEX SYMBOL] ✅ Futures symbol: ${symbol} -> ${result}`);
     return result;
   }
+
   /**
    * Pobiera scale dla ceny instrumentu
    * @param {string} symbol - Symbol instrumentu
