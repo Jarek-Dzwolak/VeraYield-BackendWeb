@@ -11,7 +11,8 @@ class PhemexService {
   }
 
   /**
-   * Tworzy podpis dla Phemex API
+   * Tworzy podpis dla Phemex API z dynamiczną ścieżką
+   * @param {string} urlPath - Ścieżka URL endpointa (np. "/g-orders", "/g-accounts/accountPositions")
    * @param {string} queryString - Query string
    * @param {string} requestBody - Ciało żądania (JSON string)
    * @param {number} expiry - Timestamp wygaśnięcia
@@ -19,8 +20,14 @@ class PhemexService {
    * @param {string} secretKey - Secret key
    * @returns {string} - Podpis HMAC
    */
-  createSignature(queryString, requestBody, expiry, accessToken, secretKey) {
-    const urlPath = "/g-accounts/accountPositions";
+  createSignature(
+    urlPath,
+    queryString,
+    requestBody,
+    expiry,
+    accessToken,
+    secretKey
+  ) {
     const message = urlPath + queryString + expiry + requestBody;
 
     const signature = crypto
@@ -32,7 +39,7 @@ class PhemexService {
   }
 
   /**
-   * Wykonuje żądanie do Phemex API
+   * Wykonuje żądanie do Phemex API z prawidłowym signature
    * @param {string} method - Metoda HTTP
    * @param {string} endpoint - Endpoint API
    * @param {string} apiKey - Klucz API
@@ -56,7 +63,9 @@ class PhemexService {
           Object.keys(params).length > 0 ? JSON.stringify(params) : "";
       }
 
+      // ✅ NAPRAWA - przekazujemy endpoint jako urlPath
       const signature = this.createSignature(
+        endpoint, // ← NAPRAWA - zamiast hardcoded path
         queryString,
         requestBody,
         expiry,
@@ -418,93 +427,47 @@ class PhemexService {
   }
 
   /**
-   * Pobiera aktualną cenę instrumentu
+   * Pobiera aktualną cenę instrumentu (mniej logów)
    * @param {string} symbol - Symbol instrumentu
    * @returns {Promise<number>} - Aktualna cena
    */
   async getCurrentPrice(symbol) {
     try {
-      logger.info(`[PHEMEX PRICE] === GETTING REAL MARKET PRICE ===`);
-      logger.info(`[PHEMEX PRICE] Input symbol: ${symbol}`);
+      logger.info(`[PHEMEX PRICE] Getting price for ${symbol}`);
 
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
-      logger.info(`[PHEMEX PRICE] Phemex symbol: ${phemexSymbol}`);
-
-      // ✅ PRAWIDŁOWY ENDPOINT: /md/v3/ticker/24hr (dla futures)
       const url = `${this.baseUrl}/md/v3/ticker/24hr`;
       const params = { symbol: phemexSymbol };
 
-      logger.info(`[PHEMEX PRICE] Request URL: ${url}`);
-      logger.info(`[PHEMEX PRICE] Params:`, JSON.stringify(params, null, 2));
-
-      let response;
-      try {
-        response = await axios.get(url, { params });
-        logger.info(`[PHEMEX PRICE] HTTP Status: ${response.status}`);
-      } catch (httpError) {
-        logger.error(`[PHEMEX PRICE] ❌ HTTP ERROR: ${httpError.message}`);
-        logger.error(`[PHEMEX PRICE] Status: ${httpError.response?.status}`);
-        logger.error(
-          `[PHEMEX PRICE] Response:`,
-          JSON.stringify(httpError.response?.data, null, 2)
-        );
-        throw httpError;
-      }
-
-      // 🔍 DEBUG: Sprawdź strukturę odpowiedzi
-      logger.info(`[PHEMEX PRICE] Response exists: ${!!response.data}`);
-      logger.info(`[PHEMEX PRICE] Has .result: ${!!response.data.result}`);
+      const response = await axios.get(url, { params });
 
       if (response.data && response.data.result) {
         const ticker = response.data.result;
 
-        logger.info(`[PHEMEX PRICE] Processing futures ticker data...`);
-
-        // 🔍 DEBUG: Sprawdź dostępne pola "Rp" (futures prices)
-        logger.info(`[PHEMEX PRICE] lastRp: ${ticker.lastRp}`);
-        logger.info(`[PHEMEX PRICE] closeRp: ${ticker.closeRp}`);
-        logger.info(`[PHEMEX PRICE] markRp: ${ticker.markRp}`);
-        logger.info(`[PHEMEX PRICE] indexRp: ${ticker.indexRp}`);
-        logger.info(`[PHEMEX PRICE] openRp: ${ticker.openRp}`);
-        logger.info(`[PHEMEX PRICE] highRp: ${ticker.highRp}`);
-
-        // ✅ FUTURES: Użyj pól "Rp" (nie wymagają skalowania)
+        // Użyj pól "Rp" (futures prices) - bez skalowania
         const rawPrice =
           ticker.lastRp ||
           ticker.closeRp ||
           ticker.markRp ||
           ticker.indexRp ||
           ticker.openRp;
-        logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
 
         if (rawPrice) {
-          // ✅ FUTURES: Pola "Rp" to bezpośrednie ceny (bez skalowania!)
           const finalPrice = parseFloat(rawPrice);
-          logger.info(
-            `[PHEMEX PRICE] ✅ REAL FUTURES PRICE: ${finalPrice} (raw: ${rawPrice}, no scaling needed for Rp fields)`
-          );
-
+          logger.info(`[PHEMEX PRICE] ✅ ${symbol}: ${finalPrice}`);
           return finalPrice;
         } else {
-          logger.error(
-            `[PHEMEX PRICE] ❌ No price field found in futures ticker`
-          );
-          const allKeys = Object.keys(ticker);
-          logger.error(
-            `[PHEMEX PRICE] Available ticker fields: ${allKeys.join(", ")}`
-          );
+          logger.error(`[PHEMEX PRICE] ❌ No price field found for ${symbol}`);
           throw new Error("No price data in futures ticker response");
         }
       } else {
-        logger.error(`[PHEMEX PRICE] ❌ Invalid API response structure`);
-        logger.error(`[PHEMEX PRICE] Expected: response.data.result`);
+        logger.error(
+          `[PHEMEX PRICE] ❌ Invalid response structure for ${symbol}`
+        );
         throw new Error("Invalid response structure from Phemex futures API");
       }
     } catch (error) {
-      logger.error(`[PHEMEX PRICE] ❌ GENERAL ERROR: ${error.message}`);
-      if (error.stack) {
-        logger.error(`[PHEMEX PRICE] Stack trace: ${error.stack}`);
-      }
+      logger.error(`[PHEMEX PRICE] ❌ Error for ${symbol}: ${error.message}`);
       throw error;
     }
   }
