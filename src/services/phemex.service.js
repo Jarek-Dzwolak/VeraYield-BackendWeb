@@ -451,22 +451,48 @@ class PhemexService {
         throw httpError;
       }
 
-      // 🔍 DEBUG: Sprawdź strukturę odpowiedzi
+      // 🔍 SZCZEGÓŁOWE DEBUGOWANIE (bez JSON.stringify)
+      logger.info(`[PHEMEX PRICE] Response exists: ${!!response.data}`);
+      logger.info(`[PHEMEX PRICE] Response type: ${typeof response.data}`);
       logger.info(
-        `[PHEMEX PRICE] Raw response keys:`,
-        Object.keys(response.data || {})
-      );
-      logger.info(`[PHEMEX PRICE] Raw response type:`, typeof response.data);
-      logger.info(
-        `[PHEMEX PRICE] Raw response length:`,
-        JSON.stringify(response.data).length
-      );
-      logger.info(
-        `[PHEMEX PRICE] Response body:`,
-        JSON.stringify(response.data, null, 2)
+        `[PHEMEX PRICE] Response constructor: ${response.data?.constructor?.name}`
       );
 
       if (response.data) {
+        logger.info(`[PHEMEX PRICE] Has .result: ${!!response.data.result}`);
+        logger.info(`[PHEMEX PRICE] Has .data: ${!!response.data.data}`);
+        logger.info(`[PHEMEX PRICE] Has .code: ${response.data.code}`);
+        logger.info(`[PHEMEX PRICE] Has .msg: ${response.data.msg}`);
+
+        if (response.data.result) {
+          logger.info(
+            `[PHEMEX PRICE] Result type: ${typeof response.data.result}`
+          );
+          logger.info(
+            `[PHEMEX PRICE] Result constructor: ${response.data.result?.constructor?.name}`
+          );
+
+          if (typeof response.data.result === "object") {
+            const keys = Object.keys(response.data.result || {});
+            logger.info(`[PHEMEX PRICE] Result keys count: ${keys.length}`);
+            logger.info(
+              `[PHEMEX PRICE] First 5 keys: ${keys.slice(0, 5).join(", ")}`
+            );
+
+            // Sprawdź konkretne pola ceny
+            const ticker = response.data.result;
+            logger.info(
+              `[PHEMEX PRICE] lastPx exists: ${ticker.lastPx !== undefined}`
+            );
+            logger.info(
+              `[PHEMEX PRICE] close exists: ${ticker.close !== undefined}`
+            );
+            logger.info(
+              `[PHEMEX PRICE] price exists: ${ticker.price !== undefined}`
+            );
+          }
+        }
+
         logger.info(`[PHEMEX PRICE] Processing response data...`);
 
         // Sprawdź różne struktury odpowiedzi
@@ -485,11 +511,6 @@ class PhemexService {
           ticker = response.data;
           logger.info(`[PHEMEX PRICE] Using direct data structure`);
         }
-
-        logger.info(
-          `[PHEMEX PRICE] Ticker object:`,
-          JSON.stringify(ticker, null, 2)
-        );
 
         if (ticker) {
           logger.info(`[PHEMEX PRICE] Ticker data fields:`, {
@@ -548,6 +569,7 @@ class PhemexService {
       throw error;
     }
   }
+
   /**
    * Pobiera informacje o instrumencie
    * @param {string} symbol - Symbol instrumentu
