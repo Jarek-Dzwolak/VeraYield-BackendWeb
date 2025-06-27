@@ -430,7 +430,7 @@ class PhemexService {
       const phemexSymbol = this.convertToPhemexSymbol(symbol);
       logger.info(`[PHEMEX PRICE] Phemex symbol: ${phemexSymbol}`);
 
-      // ✅ PRAWIDŁOWY ENDPOINT: /md/v3/ticker/24hr
+      // ✅ PRAWIDŁOWY ENDPOINT: /md/v3/ticker/24hr (dla futures)
       const url = `${this.baseUrl}/md/v3/ticker/24hr`;
       const params = { symbol: phemexSymbol };
 
@@ -451,115 +451,54 @@ class PhemexService {
         throw httpError;
       }
 
-      // 🔍 SZCZEGÓŁOWE DEBUGOWANIE (bez JSON.stringify)
+      // 🔍 DEBUG: Sprawdź strukturę odpowiedzi
       logger.info(`[PHEMEX PRICE] Response exists: ${!!response.data}`);
-      logger.info(`[PHEMEX PRICE] Response type: ${typeof response.data}`);
-      logger.info(
-        `[PHEMEX PRICE] Response constructor: ${response.data?.constructor?.name}`
-      );
+      logger.info(`[PHEMEX PRICE] Has .result: ${!!response.data.result}`);
 
-      if (response.data) {
-        logger.info(`[PHEMEX PRICE] Has .result: ${!!response.data.result}`);
-        logger.info(`[PHEMEX PRICE] Has .data: ${!!response.data.data}`);
-        logger.info(`[PHEMEX PRICE] Has .code: ${response.data.code}`);
-        logger.info(`[PHEMEX PRICE] Has .msg: ${response.data.msg}`);
+      if (response.data && response.data.result) {
+        const ticker = response.data.result;
 
-        if (response.data.result) {
+        logger.info(`[PHEMEX PRICE] Processing futures ticker data...`);
+
+        // 🔍 DEBUG: Sprawdź dostępne pola "Rp" (futures prices)
+        logger.info(`[PHEMEX PRICE] lastRp: ${ticker.lastRp}`);
+        logger.info(`[PHEMEX PRICE] closeRp: ${ticker.closeRp}`);
+        logger.info(`[PHEMEX PRICE] markRp: ${ticker.markRp}`);
+        logger.info(`[PHEMEX PRICE] indexRp: ${ticker.indexRp}`);
+        logger.info(`[PHEMEX PRICE] openRp: ${ticker.openRp}`);
+        logger.info(`[PHEMEX PRICE] highRp: ${ticker.highRp}`);
+
+        // ✅ FUTURES: Użyj pól "Rp" (nie wymagają skalowania)
+        const rawPrice =
+          ticker.lastRp ||
+          ticker.closeRp ||
+          ticker.markRp ||
+          ticker.indexRp ||
+          ticker.openRp;
+        logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
+
+        if (rawPrice) {
+          // ✅ FUTURES: Pola "Rp" to bezpośrednie ceny (bez skalowania!)
+          const finalPrice = parseFloat(rawPrice);
           logger.info(
-            `[PHEMEX PRICE] Result type: ${typeof response.data.result}`
-          );
-          logger.info(
-            `[PHEMEX PRICE] Result constructor: ${response.data.result?.constructor?.name}`
+            `[PHEMEX PRICE] ✅ REAL FUTURES PRICE: ${finalPrice} (raw: ${rawPrice}, no scaling needed for Rp fields)`
           );
 
-          if (typeof response.data.result === "object") {
-            const keys = Object.keys(response.data.result || {});
-            logger.info(`[PHEMEX PRICE] Result keys count: ${keys.length}`);
-            logger.info(
-              `[PHEMEX PRICE] First 5 keys: ${keys.slice(0, 5).join(", ")}`
-            );
-
-            // Sprawdź konkretne pola ceny
-            const ticker = response.data.result;
-            logger.info(
-              `[PHEMEX PRICE] lastPx exists: ${ticker.lastPx !== undefined}`
-            );
-            logger.info(
-              `[PHEMEX PRICE] close exists: ${ticker.close !== undefined}`
-            );
-            logger.info(
-              `[PHEMEX PRICE] price exists: ${ticker.price !== undefined}`
-            );
-          }
-        }
-
-        logger.info(`[PHEMEX PRICE] Processing response data...`);
-
-        // Sprawdź różne struktury odpowiedzi
-        let ticker = null;
-
-        if (response.data.result) {
-          ticker = response.data.result;
-          logger.info(`[PHEMEX PRICE] Using .result structure`);
-        } else if (response.data.data) {
-          ticker = response.data.data;
-          logger.info(`[PHEMEX PRICE] Using .data structure`);
-        } else if (Array.isArray(response.data) && response.data.length > 0) {
-          ticker = response.data[0];
-          logger.info(`[PHEMEX PRICE] Using array[0] structure`);
+          return finalPrice;
         } else {
-          ticker = response.data;
-          logger.info(`[PHEMEX PRICE] Using direct data structure`);
-        }
-
-        if (ticker) {
-          logger.info(`[PHEMEX PRICE] Ticker data fields:`, {
-            lastPx: ticker.lastPx,
-            markPx: ticker.markPx,
-            indexPx: ticker.indexPx,
-            close: ticker.close,
-            last: ticker.last,
-            price: ticker.price,
-            lastPrice: ticker.lastPrice,
-            markPrice: ticker.markPrice,
-          });
-
-          // Znajdź cenę w różnych polach
-          const rawPrice =
-            ticker.lastPx ||
-            ticker.last ||
-            ticker.price ||
-            ticker.close ||
-            ticker.markPx ||
-            ticker.lastPrice ||
-            ticker.markPrice;
-          logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
-
-          if (rawPrice) {
-            const priceScale = await this.getPriceScale(phemexSymbol);
-            logger.info(`[PHEMEX PRICE] Price scale: ${priceScale}`);
-
-            const finalPrice = parseFloat(rawPrice) / Math.pow(10, priceScale);
-            logger.info(
-              `[PHEMEX PRICE] ✅ REAL MARKET PRICE: ${finalPrice} (raw: ${rawPrice}, scale: ${priceScale})`
-            );
-
-            return finalPrice;
-          } else {
-            logger.error(`[PHEMEX PRICE] ❌ No price field found in ticker`);
-            logger.error(
-              `[PHEMEX PRICE] Available ticker fields:`,
-              Object.keys(ticker || {})
-            );
-            throw new Error("No price data in ticker response");
-          }
-        } else {
-          logger.error(`[PHEMEX PRICE] ❌ No ticker data found`);
-          throw new Error("No ticker object in response");
+          logger.error(
+            `[PHEMEX PRICE] ❌ No price field found in futures ticker`
+          );
+          const allKeys = Object.keys(ticker);
+          logger.error(
+            `[PHEMEX PRICE] Available ticker fields: ${allKeys.join(", ")}`
+          );
+          throw new Error("No price data in futures ticker response");
         }
       } else {
-        logger.error(`[PHEMEX PRICE] ❌ Empty response data`);
-        throw new Error("Empty response from Phemex API");
+        logger.error(`[PHEMEX PRICE] ❌ Invalid API response structure`);
+        logger.error(`[PHEMEX PRICE] Expected: response.data.result`);
+        throw new Error("Invalid response structure from Phemex futures API");
       }
     } catch (error) {
       logger.error(`[PHEMEX PRICE] ❌ GENERAL ERROR: ${error.message}`);
