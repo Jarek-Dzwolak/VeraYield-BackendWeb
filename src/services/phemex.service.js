@@ -454,60 +454,100 @@ class PhemexService {
         throw httpError;
       }
 
-      // 🔍 LOG: Response body
+      // 🔍 DEBUG: Sprawdź strukturę odpowiedzi
+      logger.info(
+        `[PHEMEX PRICE] Raw response keys:`,
+        Object.keys(response.data || {})
+      );
+      logger.info(`[PHEMEX PRICE] Raw response type:`, typeof response.data);
+      logger.info(
+        `[PHEMEX PRICE] Raw response length:`,
+        JSON.stringify(response.data).length
+      );
       logger.info(
         `[PHEMEX PRICE] Response body:`,
         JSON.stringify(response.data, null, 2)
       );
 
-      if (response.data.code === 0 && response.data.result) {
-        const ticker = response.data.result;
-        logger.info(`[PHEMEX PRICE] Ticker data:`, {
-          lastPx: ticker.lastPx,
-          markPx: ticker.markPx,
-          indexPx: ticker.indexPx,
-          close: ticker.close,
-          last: ticker.last,
-          price: ticker.price,
-        });
+      if (response.data) {
+        logger.info(`[PHEMEX PRICE] Processing response data...`);
 
-        // Znajdź cenę w różnych polach
-        const rawPrice =
-          ticker.lastPx ||
-          ticker.last ||
-          ticker.price ||
-          ticker.close ||
-          ticker.markPx;
-        logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
+        // Sprawdź różne struktury odpowiedzi
+        let ticker = null;
 
-        if (rawPrice) {
-          const priceScale = await this.getPriceScale(phemexSymbol);
-          logger.info(`[PHEMEX PRICE] Price scale: ${priceScale}`);
-
-          const finalPrice = parseFloat(rawPrice) / Math.pow(10, priceScale);
-          logger.info(
-            `[PHEMEX PRICE] ✅ REAL MARKET PRICE: ${finalPrice} (raw: ${rawPrice}, scale: ${priceScale})`
-          );
-
-          return finalPrice;
+        if (response.data.result) {
+          ticker = response.data.result;
+          logger.info(`[PHEMEX PRICE] Using .result structure`);
+        } else if (response.data.data) {
+          ticker = response.data.data;
+          logger.info(`[PHEMEX PRICE] Using .data structure`);
+        } else if (Array.isArray(response.data) && response.data.length > 0) {
+          ticker = response.data[0];
+          logger.info(`[PHEMEX PRICE] Using array[0] structure`);
         } else {
-          logger.error(`[PHEMEX PRICE] ❌ No price field found in ticker`);
-          throw new Error("No price data in ticker response");
+          ticker = response.data;
+          logger.info(`[PHEMEX PRICE] Using direct data structure`);
+        }
+
+        logger.info(
+          `[PHEMEX PRICE] Ticker object:`,
+          JSON.stringify(ticker, null, 2)
+        );
+
+        if (ticker) {
+          logger.info(`[PHEMEX PRICE] Ticker data fields:`, {
+            lastPx: ticker.lastPx,
+            markPx: ticker.markPx,
+            indexPx: ticker.indexPx,
+            close: ticker.close,
+            last: ticker.last,
+            price: ticker.price,
+            lastPrice: ticker.lastPrice,
+            markPrice: ticker.markPrice,
+          });
+
+          // Znajdź cenę w różnych polach
+          const rawPrice =
+            ticker.lastPx ||
+            ticker.last ||
+            ticker.price ||
+            ticker.close ||
+            ticker.markPx ||
+            ticker.lastPrice ||
+            ticker.markPrice;
+          logger.info(`[PHEMEX PRICE] Raw price from API: ${rawPrice}`);
+
+          if (rawPrice) {
+            const priceScale = await this.getPriceScale(phemexSymbol);
+            logger.info(`[PHEMEX PRICE] Price scale: ${priceScale}`);
+
+            const finalPrice = parseFloat(rawPrice) / Math.pow(10, priceScale);
+            logger.info(
+              `[PHEMEX PRICE] ✅ REAL MARKET PRICE: ${finalPrice} (raw: ${rawPrice}, scale: ${priceScale})`
+            );
+
+            return finalPrice;
+          } else {
+            logger.error(`[PHEMEX PRICE] ❌ No price field found in ticker`);
+            logger.error(
+              `[PHEMEX PRICE] Available ticker fields:`,
+              Object.keys(ticker || {})
+            );
+            throw new Error("No price data in ticker response");
+          }
+        } else {
+          logger.error(`[PHEMEX PRICE] ❌ No ticker data found`);
+          throw new Error("No ticker object in response");
         }
       } else {
-        logger.error(`[PHEMEX PRICE] ❌ Invalid API response:`);
-        logger.error(`[PHEMEX PRICE] Code: ${response.data.code}`);
-        logger.error(`[PHEMEX PRICE] Message: ${response.data.msg}`);
-        throw new Error(
-          `Phemex API error: ${response.data.msg || "Invalid response"}`
-        );
+        logger.error(`[PHEMEX PRICE] ❌ Empty response data`);
+        throw new Error("Empty response from Phemex API");
       }
     } catch (error) {
       logger.error(`[PHEMEX PRICE] ❌ GENERAL ERROR: ${error.message}`);
       if (error.stack) {
         logger.error(`[PHEMEX PRICE] Stack trace: ${error.stack}`);
       }
-      // ❌ NIE MA FALLBACK - aplikacja musi dostać prawdziwą cenę!
       throw error;
     }
   }
