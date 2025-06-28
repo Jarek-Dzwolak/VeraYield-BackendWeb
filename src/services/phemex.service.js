@@ -287,14 +287,14 @@ class PhemexService {
   }
 
   /**
-   * Zamyka pozycję na Phemex
+   * ✅ NAPRAWIONA - Zamyka pozycję na Phemex (zgodnie z formatem openPosition)
    * @param {string} apiKey - Klucz API
    * @param {string} apiSecret - Sekret API
    * @param {string} symbol - Symbol instrumentu
-   * @param {string} side - Strona oryginalnej pozycji
+   * @param {string} side - Strona oryginalnej pozycji ("Buy" dla Long pozycji)
    * @param {string} quantity - Wielkość do zamknięcia
-   * @param {number} positionIdx - Indeks pozycji
-   * @param {string} subaccountId - ID subkonta
+   * @param {number} positionIdx - Indeks pozycji (nie używany)
+   * @param {string} subaccountId - ID subkonta (nie używany)
    * @returns {Promise<Object>} - Odpowiedź z API
    */
   async closePosition(
@@ -312,24 +312,36 @@ class PhemexService {
       // Odwróć stronę dla zamknięcia pozycji
       const closeSide = side === "Buy" ? "Sell" : "Buy";
 
+      // ✅ NAPRAWA - użyj tego samego formatu co openPosition
       const params = {
-        symbol: phemexSymbol,
-        side: closeSide,
-        orderQty: parseFloat(quantity),
-        ordType: "Market",
-        timeInForce: "ImmediateOrCancel",
-        reduceOnly: true,
+        clOrdID: `close-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, // ✅ DODANE
+        symbol: phemexSymbol, // ✅ BTCUSDT
+        side: closeSide, // ✅ "Sell" (dla zamknięcia Long)
+        orderQtyRq: quantity.toString(), // ✅ NAPRAWA - string zamiast parseFloat
+        ordType: "Market", // ✅ Market order
+        timeInForce: "ImmediateOrCancel", // ✅ IOC
+        posSide: side === "Buy" ? "Long" : "Short", // ✅ DODANE - pozycja którą zamykamy
+        reduceOnly: true, // ✅ ZACHOWANE - właściwe dla close
       };
 
+      logger.info(
+        `[PHEMEX] Close order: ${closeSide} ${quantity} BTC (${side} position)`
+      );
+
+      // ✅ NAPRAWA - użyj tego samego endpointa co openPosition
       const response = await this.makeRequest(
         "POST",
-        "/orders",
+        "/g-orders", // ✅ NAPRAWA - "/g-orders" zamiast "/orders"
         apiKey,
         apiSecret,
         params
       );
 
       if (response.code === 0) {
+        logger.info(
+          `[PHEMEX] Position closed: ${closeSide} ${quantity} BTC | ID: ${response.data?.orderID}`
+        );
+
         return {
           result: {
             orderId: response.data?.orderID,
@@ -337,10 +349,13 @@ class PhemexService {
           },
         };
       } else {
+        logger.error(
+          `[PHEMEX ORDER] ❌ API ERROR: Code ${response.code} - ${response.msg}`
+        );
         throw new Error(response.msg || "Position close failed");
       }
     } catch (error) {
-      logger.error(`Error closing position: ${error.message}`);
+      logger.error(`[PHEMEX ORDER] ❌ NETWORK ERROR: ${error.message}`);
       throw error;
     }
   }
