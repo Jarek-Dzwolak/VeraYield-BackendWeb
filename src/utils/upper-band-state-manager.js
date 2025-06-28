@@ -97,10 +97,10 @@ class UpperBandStateManager {
         const now = Date.now();
 
         const upperBand = hurstResult.upperBand;
-        const exitTrigger = upperBand * 1.002;
-        const returnTrigger = upperBand * 0.998;
-        const exitResetTrigger = upperBand * 0.9975;
-        const returnResetTrigger = upperBand * 1.0025;
+        const exitTrigger = upperBand * 1.001;
+        const returnTrigger = upperBand * 0.999;
+        const exitResetTrigger = upperBand * 0.998;
+        const returnResetTrigger = upperBand * 1.002;
 
         if (now - timers.lastLogTime > 120000) {
           this.logStateProgress(instanceId, state, currentPrice, upperBand);
