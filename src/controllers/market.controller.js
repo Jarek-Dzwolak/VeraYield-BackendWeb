@@ -111,6 +111,12 @@ const getHistoricalCandles = async (req, res) => {
     const { symbol } = req.params;
     const { interval = "1h", limit = 1000 } = req.query;
 
+    TradingLogger.logDebugThrottled(
+      "chart-data-frontend",
+      "[CHART] Pobieranie świec dla frontu",
+      60000
+    );
+
     // Waliduj parametry
     if (!isValidSymbol(symbol)) {
       return res.status(400).json({

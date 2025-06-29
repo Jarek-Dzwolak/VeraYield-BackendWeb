@@ -28,7 +28,15 @@ app.use(cors()); // Obsługa Cross-Origin Resource Sharing
 app.use(compression()); // Kompresja odpowiedzi
 app.use(express.json()); // Parsowanie JSON
 app.use(express.urlencoded({ extended: true })); // Parsowanie formularzy
-app.use(morgan("dev")); // Logowanie żądań HTTP
+// Morgan z filtrowaniem dla endpointów wykresów
+app.use(
+  morgan("dev", {
+    skip: function (req, res) {
+      // Ukryj szczegółowe logi dla endpointów wykresów
+      return req.url.includes("/market/klines/");
+    },
+  })
+);
 
 // Połącz z bazą danych
 (async () => {

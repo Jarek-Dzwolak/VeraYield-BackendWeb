@@ -16,6 +16,10 @@ const signalRoutes = require("./signal.routes");
 const instanceRoutes = require("./instance.routes");
 const simulatorRoutes = require("./simulator.routes"); // Tylko do testów
 
+// ✅ NOWE - Import kontrolera danych frontendowych i middleware autentykacji
+const frontendDataController = require("../controllers/frontend-data.controller");
+const authMiddleware = require("../middleware/auth.middleware");
+
 // Bazowa ścieżka API
 const API_BASE = "/api/v1";
 
@@ -25,6 +29,23 @@ router.use(`${API_BASE}/market`, marketRoutes);
 router.use(`${API_BASE}/signals`, signalRoutes);
 router.use(`${API_BASE}/instances`, instanceRoutes);
 router.use(`${API_BASE}/simulator`, simulatorRoutes); // Tylko do testów
+
+// ✅ NOWE - Routing dla danych frontendowych z autentykacją
+router.get(
+  `${API_BASE}/frontend-data`,
+  authMiddleware.verifyToken,
+  frontendDataController.getAvailableFunctions
+);
+router.get(
+  `${API_BASE}/frontend-data/hurst-history/:instanceId`,
+  authMiddleware.verifyToken,
+  frontendDataController.getHurstHistory
+);
+router.get(
+  `${API_BASE}/frontend-data/parameters/:instanceId`,
+  authMiddleware.verifyToken,
+  frontendDataController.getInstanceParameters
+);
 
 // Podstawowa trasa dla sprawdzenia działania API
 router.get(`${API_BASE}`, (req, res) => {
@@ -41,6 +62,7 @@ router.get(`${API_BASE}`, (req, res) => {
       market: `${API_BASE}/market`,
       signals: `${API_BASE}/signals`,
       instances: `${API_BASE}/instances`,
+      frontendData: `${API_BASE}/frontend-data`, // ✅ NOWE
     },
     webSocket: {
       url: `${wsProtocol}://${host}`,
