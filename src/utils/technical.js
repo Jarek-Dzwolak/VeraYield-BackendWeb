@@ -148,15 +148,19 @@ class HurstChannel {
       const mean = this._calculateMean(closePrices);
       const stdDev = this._calculateStandardDeviation(closePrices, mean);
 
-      // Oblicz górną i dolną bandę kanału Hursta
-      // Użyj odrębnych wartości dla górnej i dolnej bandy
-      const upperBand = mean + this.options.upperDeviationFactor * stdDev;
-      const lowerBand = mean - this.options.lowerDeviationFactor * stdDev;
+      // PRAWDZIWY KANAŁ HURSTA - wykładnik jako mnożnik bazowych szerokości
+      const adaptiveUpperFactor =
+        this.options.upperDeviationFactor * hurstExponent;
+      const adaptiveLowerFactor =
+        this.options.lowerDeviationFactor * hurstExponent;
+
+      const upperBand = mean + adaptiveUpperFactor * stdDev;
+      const lowerBand = mean - adaptiveLowerFactor * stdDev;
 
       // Oblicz nachylenie kanału (trend)
       const trend = this._calculateTrend(relevantCandles);
 
-      // Zwróć wyniki
+      // Zwróć wyniki z dodatkowymi informacjami o adaptacyjności
       return {
         upperBand,
         middleBand: mean,
@@ -167,6 +171,11 @@ class HurstChannel {
         lastClose: closePrices[closePrices.length - 1],
         lastCandle: relevantCandles[relevantCandles.length - 1],
         timestamp: new Date().getTime(),
+        // Dodatkowe informacje diagnostyczne
+        adaptiveUpperFactor,
+        adaptiveLowerFactor,
+        originalUpperFactor: this.options.upperDeviationFactor,
+        originalLowerFactor: this.options.lowerDeviationFactor,
       };
     } catch (error) {
       logger.error(`Błąd podczas obliczania kanału Hursta: ${error.message}`);
