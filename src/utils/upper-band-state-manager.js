@@ -97,17 +97,10 @@ class UpperBandStateManager {
         const now = Date.now();
 
         const upperBand = hurstResult.upperBand;
-        const exitTrigger = upperBand * 0.95; // ZMIENIONE NA TEST!
+        const exitTrigger = upperBand * 1.0009;
         const returnTrigger = upperBand * 0.999;
         const exitResetTrigger = upperBand * 0.998;
         const returnResetTrigger = upperBand * 1.002;
-
-        // DODANY LOG - throttled co 30 sekund
-        TradingLogger.logDebugThrottled(
-          `upperband-check-${instanceId}`,
-          `[UPPERBAND CHECK] State: ${state.currentState} | Price: ${currentPrice} | High: ${currentHigh} | UpperBand: ${upperBand} | ExitTrigger: ${exitTrigger} | Would trigger: ${currentHigh >= exitTrigger}`,
-          30000
-        );
 
         if (now - timers.lastLogTime > 120000) {
           this.logStateProgress(instanceId, state, currentPrice, upperBand);
@@ -179,12 +172,6 @@ class UpperBandStateManager {
       state.triggerPrice = currentPrice;
       state.bandLevel = upperBand;
       state.resetConditionMet = false;
-
-      TradingLogger.logUpperBandState(
-        instanceId,
-        "exit_started",
-        `Counting exit (${currentPrice} > ${exitTrigger.toFixed(2)} +0.2%)`
-      );
     }
     return null;
   }
