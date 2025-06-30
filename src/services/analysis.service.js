@@ -143,9 +143,6 @@ class AnalysisService extends EventEmitter {
   }
 
   async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
-    logger.info(
-      `[DETECT REAL] ${instanceId.slice(-8)}: price=${currentPrice}, high=${currentHigh}, low=${currentLow}`
-    );
     try {
       const indicators = this.indicators.get(instanceId);
       if (!indicators || !indicators.hurstResult) {
@@ -167,9 +164,7 @@ class AnalysisService extends EventEmitter {
         if (!this._injectedSignalService) return null;
         return this._injectedSignalService.getActivePositions(id);
       };
-      logger.info(
-        `[DETECT REAL] ${instanceId.slice(-8)}: upperBand=${hurstResult.upperBand.toFixed(2)}, exitTrigger=${(hurstResult.upperBand * 1.001).toFixed(2)}`
-      );
+
       const exitSignal = await upperBandStateManager.updateState(
         instanceId,
         currentPrice,
