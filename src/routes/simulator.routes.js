@@ -31,6 +31,8 @@ router.get(
   "/upperband-status/:instanceId",
   simulatorController.checkUpperBandCurrentState
 );
+// Wstrzykiwanie zdarzeń upperBandState
+router.post("/inject-spike/:instanceId", simulatorController.injectPriceSpike);
 
 // Informacja o dostępnych scenariuszach
 router.get("/scenarios", (req, res) => {

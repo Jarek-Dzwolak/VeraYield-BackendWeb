@@ -341,9 +341,74 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Wstrzykuje sztuczną świecę do rzeczywistego strumienia
+ */
+const injectPriceSpike = async (req, res) => {
+  try {
+    const { instanceId } = req.params;
+    const { priceMultiplier = 1.002 } = req.body; // Domyślnie +0.2% powyżej obecnej ceny
+
+    // Pobierz aktualny stan
+    const analysisState = analysisService.getInstanceAnalysisState(instanceId);
+    if (!analysisState || !analysisState.hurstChannel) {
+      return res
+        .status(400)
+        .json({ error: "No analysis state or Hurst channel" });
+    }
+
+    const currentPrice = analysisState.lastPrice || 70000;
+    const upperBand = analysisState.hurstChannel.upperBand;
+    const spikePrice = Math.max(
+      currentPrice * priceMultiplier,
+      upperBand * 1.002
+    ); // Gwarantujemy przekroczenie
+
+    logger.info(
+      `[INJECT] Injecting price spike: ${currentPrice} → ${spikePrice} (upper band: ${upperBand})`
+    );
+
+    // Emituj sztuczną świecę bezpośrednio do binanceService
+    // To przejdzie przez cały normalny flow
+    binanceService.emit("kline", {
+      candle: {
+        symbol: analysisState.symbol,
+        interval: "15m",
+        open: currentPrice,
+        high: spikePrice, // Kluczowe - high przekracza górną bandę
+        low: currentPrice,
+        close: spikePrice - 10,
+        volume: 100,
+        isFinal: false, // Nie zamknięta, żeby nie zaburzyć historii
+        openTime: Date.now() - 60000,
+        closeTime: Date.now(),
+      },
+      instanceId: instanceId,
+    });
+
+    // Po 2 sekundach sprawdź stan
+    setTimeout(() => {
+      const newState = analysisService.getInstanceAnalysisState(instanceId);
+      const upperBandState = upperBandStateManager.getState(instanceId);
+
+      res.json({
+        message: "Price spike injected",
+        injectedPrice: spikePrice,
+        upperBand: upperBand,
+        currentState: upperBandState?.currentState || "NOT_INITIALIZED",
+        newPrice: newState?.lastPrice,
+        triggered: upperBandState?.currentState === "exit_counting",
+      });
+    }, 2000);
+  } catch (error) {
+    logger.error(`[INJECT] Error: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+};
 // DODAJ DO EKSPORTÓW w simulator.controller.js:
 module.exports = {
-  simulateMarketConditions, // istniejący
-  testUpperBandRealConditions, // NOWY
-  checkUpperBandCurrentState, // NOWY
+  simulateMarketConditions,
+  testUpperBandRealConditions,
+  checkUpperBandCurrentState,
+  injectPriceSpike,
 };
