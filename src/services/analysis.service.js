@@ -61,6 +61,11 @@ class AnalysisService extends EventEmitter {
 
     binanceService.on("kline", (data) => {
       const { candle, instanceId } = data;
+      TradingLogger.logDebugThrottled(
+        `kline-received-${instanceId}`,
+        `[KLINE RECEIVED] Instance: ${instanceId} | Symbol: ${candle.symbol} | Price: ${candle.close} | High: ${candle.high}`,
+        60000 // raz na minutę
+      );
       const currentPrice = candle.close;
       const currentHigh = candle.high;
       const currentLow = candle.low;
@@ -144,6 +149,13 @@ class AnalysisService extends EventEmitter {
 
   async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
     try {
+      // DODANY LOG 1 - czy funkcja jest wywoływana
+      TradingLogger.logDebugThrottled(
+        `detect-signals-${instanceId}`,
+        `[DETECT SIGNALS] Instance: ${instanceId} | Price: ${currentPrice} | High: ${currentHigh} | Low: ${currentLow}`,
+        30000
+      );
+
       const indicators = this.indicators.get(instanceId);
       if (!indicators || !indicators.hurstResult) {
         return;
@@ -153,6 +165,13 @@ class AnalysisService extends EventEmitter {
       const emaValue = indicators.emaValue;
       const shortEmaValue = indicators.shortEmaValue;
       const config = this.instances.get(instanceId);
+
+      // DODANY LOG 2 - parametry upper band
+      TradingLogger.logDebugThrottled(
+        `detect-upperband-${instanceId}`,
+        `[DETECT UPPERBAND] UpperBand: ${hurstResult.upperBand} | TestTrigger (95%): ${hurstResult.upperBand * 0.95} | High: ${currentHigh} | Would trigger: ${currentHigh >= hurstResult.upperBand * 0.95}`,
+        30000
+      );
 
       const currentTrend = this.determineTrend(
         currentPrice,
