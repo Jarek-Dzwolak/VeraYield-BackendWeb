@@ -19,6 +19,19 @@ router.post(
   simulatorController.simulateMarketConditions
 );
 
+// === NOWE ENDPOINTY UPPERBAND ===
+// Test pełnego cyklu upperBandState
+router.post(
+  "/upperband/:instanceId",
+  simulatorController.testUpperBandRealConditions
+);
+
+// Check aktualnego stanu upperBandState
+router.get(
+  "/upperband-status/:instanceId",
+  simulatorController.checkUpperBandCurrentState
+);
+
 // Informacja o dostępnych scenariuszach
 router.get("/scenarios", (req, res) => {
   res.json({
