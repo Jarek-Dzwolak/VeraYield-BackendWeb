@@ -8,6 +8,7 @@ const MarketSimulator = require("../utils/market-simulator");
 const analysisService = require("../services/analysis.service");
 const Instance = require("../models/instance.model");
 const logger = require("../utils/logger");
+const binanceService = require("../services/binance.service");
 
 /**
  * Symuluje warunki rynkowe
