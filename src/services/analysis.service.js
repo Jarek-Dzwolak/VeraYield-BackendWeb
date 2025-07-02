@@ -459,19 +459,6 @@ class AnalysisService extends EventEmitter {
       if (hurstResult) {
         indicators.hurstResult = hurstResult;
 
-        console.log("=== HURST CHANNEL UPDATE ===");
-        console.log("Instance:", instanceId.slice(-8));
-        console.log("Candles count:", candles.length);
-        console.log("Last candle price:", candles[candles.length - 1]?.close);
-        console.log(
-          "Last candle time:",
-          new Date(candles[candles.length - 1]?.closeTime).toISOString()
-        );
-        console.log("Hurst upperBand:", hurstResult.upperBand);
-        console.log("Hurst lowerBand:", hurstResult.lowerBand);
-        console.log("Hurst lastClose:", hurstResult.lastClose);
-        console.log("============================");
-
         this.emit("hurstUpdated", {
           instanceId,
           result: hurstResult,
