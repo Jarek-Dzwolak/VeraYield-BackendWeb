@@ -89,7 +89,7 @@ class TradingLogger {
     const priceDirection = priceVsBand >= 0 ? "+" : "";
 
     logger.info(
-      `[UPPER BAND] 📊 ${stateName} | ${symbol} | ${minutesElapsed}/15 min | Price: ${currentPrice} (${priceDirection}${priceVsBand}%) | Instance: ${instanceId.slice(-8)}`
+      `[UPPER BAND] 📊 ${stateName} | ${symbol} | ${minutesElapsed}/8 min | Price: ${currentPrice} (${priceDirection}${priceVsBand}%) | Instance: ${instanceId.slice(-8)}`
     );
   }
 

@@ -251,7 +251,7 @@ class UpperBandStateManager {
         );
       } else {
         const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 7.5 * 60 * 1000) {
+        if (resetTimeElapsed >= 8 * 60 * 1000) {
           state.currentState = "waiting_for_exit";
           state.stateStartTime = null;
           state.resetConditionMet = false;
@@ -273,7 +273,7 @@ class UpperBandStateManager {
       );
     }
 
-    if (timeElapsed >= 7.5 * 60 * 1000) {
+    if (timeElapsed >= 8 * 60 * 1000) {
       state.currentState = "waiting_for_return";
       state.stateStartTime = null;
       state.resetConditionMet = false;
@@ -281,7 +281,7 @@ class UpperBandStateManager {
       TradingLogger.logUpperBandState(
         instanceId,
         "exit_confirmed",
-        `EXIT CONFIRMED after 15 min. Ready for return signal.`
+        `EXIT CONFIRMED after 8 min. Ready for return signal.`
       );
     }
     return null;
@@ -336,7 +336,7 @@ class UpperBandStateManager {
         );
       } else {
         const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 7.5 * 60 * 1000) {
+        if (resetTimeElapsed >= 8 * 60 * 1000) {
           state.currentState = "waiting_for_return";
           state.stateStartTime = null;
           state.resetConditionMet = false;
@@ -358,7 +358,7 @@ class UpperBandStateManager {
       );
     }
 
-    if (timeElapsed >= 7.5 * 60 * 1000) {
+    if (timeElapsed >= 8 * 60 * 1000) {
       const exitSignal = {
         instanceId,
         type: "upperBandReturn",
@@ -366,8 +366,8 @@ class UpperBandStateManager {
         hurstChannel: { upperBand },
         timestamp: now,
         metadata: {
-          exitReason: "Confirmed return to channel after 15 minutes",
-          totalCycleTime: "30+ minutes",
+          exitReason: "Confirmed return to channel after 8 minutes",
+          totalCycleTime: "16+ minutes",
           returnTrigger: state.bandLevel * 0.999,
           finalPrice: priceForDecisions, // ← 1m CLOSE
           priceSource: "1m_close", // ← Info o źródle
@@ -381,7 +381,7 @@ class UpperBandStateManager {
       TradingLogger.logUpperBandState(
         instanceId,
         "return_confirmed",
-        `POSITION CLOSED - Return confirmed after 15 min (1m CLOSE: ${priceForDecisions})`
+        `POSITION CLOSED - Return confirmed after 8 min (1m CLOSE: ${priceForDecisions})`
       );
 
       return exitSignal;

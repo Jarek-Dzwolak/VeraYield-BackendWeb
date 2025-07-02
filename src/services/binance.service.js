@@ -41,6 +41,13 @@ class BinanceService extends EventEmitter {
     endTime
   ) {
     try {
+      // 🆕 DODANE: Log diagnostyczny gdy używamy endTime (dla inicjalizacji)
+      if (endTime && !startTime) {
+        logger.debug(
+          `[API] Pobieranie świeżych danych: ${symbol}/${interval}, limit: ${limit}, endTime: ${new Date(endTime).toISOString()}`
+        );
+      }
+
       const url = `${BINANCE_API_BASE_URL}/api/v3/klines`;
       const params = {
         symbol: symbol.toUpperCase(),
@@ -67,6 +74,21 @@ class BinanceService extends EventEmitter {
         takerBuyBaseAssetVolume: parseFloat(candle[9]),
         takerBuyQuoteAssetVolume: parseFloat(candle[10]),
       }));
+
+      // 🆕 DODANE: Dodatkowa diagnostyka dla inicjalizacji
+      if (endTime && !startTime && candles.length > 0) {
+        const firstCandle = candles[0];
+        const lastCandle = candles[candles.length - 1];
+
+        logger.debug(
+          `[API] ${symbol}/${interval}: pobrano ${candles.length} świec, zakres: ${new Date(firstCandle.openTime).toISOString()} - ${new Date(lastCandle.closeTime).toISOString()}`
+        );
+
+        const candleAge = Date.now() - lastCandle.closeTime;
+        logger.debug(
+          `[API] ${symbol}/${interval}: ostatnia świeca sprzed ${Math.floor(candleAge / 60000)} minut`
+        );
+      }
 
       // Zapisz dane w pamięci
       const key = `${symbol}-${interval}`;
@@ -253,13 +275,50 @@ class BinanceService extends EventEmitter {
    */
   async initializeInstanceData(symbol, intervals, instanceId) {
     try {
-      // Pobierz dane historyczne dla każdego interwału
+      // 🆕 DODANE: Wymuś aktualne dane przy inicjalizacji
+      const endTime = Date.now();
+
+      logger.info(
+        `[INIT] Inicjalizacja danych dla ${instanceId}: ${symbol}, intervals: ${intervals.join(",")}, endTime: ${new Date(endTime).toISOString()}`
+      );
+
+      // Pobierz dane historyczne dla każdego interwału z wymuszonym endTime
       const dataPromises = intervals.map((interval) => {
         const limit = interval === "1h" ? 100 : 25;
-        return this.getHistoricalCandles(symbol, interval, limit);
+        // 🆕 KLUCZOWA ZMIANA: Dodaj endTime=Date.now() tylko dla inicjalizacji
+        return this.getHistoricalCandles(
+          symbol,
+          interval,
+          limit,
+          null,
+          endTime
+        );
       });
 
       await Promise.all(dataPromises);
+
+      // 🆕 DODANE: Weryfikacja świeżości pobranych danych
+      intervals.forEach((interval) => {
+        const key = `${symbol}-${interval}`;
+        const candles = this.candleData.get(key);
+
+        if (candles && candles.length > 0) {
+          const lastCandle = candles[candles.length - 1];
+          const candleAge = Date.now() - lastCandle.closeTime;
+          const intervalMs = this._getIntervalMs(interval);
+
+          logger.info(
+            `[INIT] ${symbol}/${interval}: ostatnia świeca sprzed ${Math.floor(candleAge / 60000)} min, oczekiwane max: ${Math.floor(intervalMs / 60000)} min`
+          );
+
+          // Ostrzeżenie jeśli dane są starsze niż 2 interwały
+          if (candleAge > intervalMs * 2) {
+            logger.warn(
+              `[INIT] ⚠️ Stare dane! ${symbol}/${interval}: ostatnia świeca sprzed ${Math.floor(candleAge / 60000)} min`
+            );
+          }
+        }
+      });
 
       // Subskrybuj WebSockety dla każdego interwału
       intervals.forEach((interval) => {
@@ -276,6 +335,28 @@ class BinanceService extends EventEmitter {
       );
       throw error;
     }
+  }
+
+  // 🆕 DODANE: Helper method do konwersji interwału na milisekundy
+  _getIntervalMs(interval) {
+    const intervalMap = {
+      "1m": 60 * 1000,
+      "3m": 3 * 60 * 1000,
+      "5m": 5 * 60 * 1000,
+      "15m": 15 * 60 * 1000,
+      "30m": 30 * 60 * 1000,
+      "1h": 60 * 60 * 1000,
+      "2h": 2 * 60 * 60 * 1000,
+      "4h": 4 * 60 * 60 * 1000,
+      "6h": 6 * 60 * 60 * 1000,
+      "8h": 8 * 60 * 60 * 1000,
+      "12h": 12 * 60 * 60 * 1000,
+      "1d": 24 * 60 * 60 * 1000,
+      "3d": 3 * 24 * 60 * 60 * 1000,
+      "1w": 7 * 24 * 60 * 60 * 1000,
+      "1M": 30 * 24 * 60 * 60 * 1000,
+    };
+    return intervalMap[interval] || 15 * 60 * 1000; // Default 15m
   }
 
   /**
