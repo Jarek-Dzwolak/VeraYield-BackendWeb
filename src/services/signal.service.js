@@ -7,13 +7,14 @@ const { EventEmitter } = require("events");
 const Signal = require("../models/signal.model");
 const Instance = require("../models/instance.model");
 const instanceService = require("./instance.service");
+const downerBandStateManager = require("../utils/downer-band-state-manager");
 
 class SignalService extends EventEmitter {
   constructor() {
     super();
     this.activePositions = new Map();
     this.positionHistory = new Map();
-    this.lastEntryTimes = new Map();
+    this.lastEntryTimes = new Map(); // ✅ ZACHOWANE - używane jako backup/sync z DownerBandStateManager
     this.lastRejectionLogs = new Map();
   }
 
@@ -21,6 +22,7 @@ class SignalService extends EventEmitter {
     const analysisService = require("./analysis.service");
     analysisService.setSignalService(this);
 
+    // ✅ BEZ ZMIAN - nadal odbiera sygnały przez event emitter
     analysisService.on("entrySignal", (data) => {
       this.processEntrySignal(data);
     });
@@ -123,7 +125,8 @@ class SignalService extends EventEmitter {
   async processEntrySignal(signalData) {
     return mutex.withLock(`entry-${signalData.instanceId}`, async () => {
       try {
-        const { instanceId, type, price, timestamp, trend } = signalData;
+        const { instanceId, type, price, timestamp, trend, subType } =
+          signalData;
         let currentPosition = this.activePositions.get(instanceId);
 
         const instance = await Instance.findOne({ instanceId });
@@ -146,66 +149,37 @@ class SignalService extends EventEmitter {
         }
 
         const strategyParams = instance.strategy.parameters;
-        const firstEntryPercent =
-          strategyParams.capitalAllocation?.firstEntry * 100 || 10;
-        const secondEntryPercent =
-          strategyParams.capitalAllocation?.secondEntry * 100 || 25;
-        const thirdEntryPercent =
-          strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
-        const minEntryTimeGap =
-          strategyParams.signals?.minEntryTimeGap || 7200000;
+        const leverage = instance.phemexConfig?.leverage || 3;
 
+        // ✅ UŻYWAMY price z DownerBandStateManager (1M CLOSE)
         const currentPrice = await phemexService.getCurrentPrice(
           instance.symbol
         );
         const instrumentInfo = await phemexService.getCachedInstrumentInfo(
           instance.symbol
         );
-        const leverage = instance.phemexConfig?.leverage || 3;
 
         if (!currentPosition) {
-          const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
+          // ✅ PIERWSZE WEJŚCIE
+          const firstEntryPercent =
+            strategyParams.capitalAllocation?.firstEntry * 100 || 10;
 
-          if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-            const rejectionKey = `${instanceId}-bad-trend`;
-            this.lastRejectionLogs.set(
-              rejectionKey,
-              TradingLogger.logSignalRejected(
-                instanceId,
-                instance.symbol,
-                `Bad trend: ${trend}`,
-                this.lastRejectionLogs.get(rejectionKey)
-              )
-            );
-
-            await this.createSignalInDatabase({
-              instanceId,
-              symbol: instance.symbol,
-              type: "entry-rejected",
-              subType: "trend-filter",
-              price,
-              timestamp,
-              status: "canceled",
-              metadata: { trend },
-            });
-            return;
-          }
-
-          const positionId = `position-${instanceId}-${Date.now()}`;
           const optimalEntry = await this._calculateOptimalContractQuantity(
             firstEntryPercent,
             instance.financials.availableBalance,
-            currentPrice,
+            currentPrice, // Live price dla obliczeń
             leverage,
             instrumentInfo
           );
+
+          const positionId = `position-${instanceId}-${Date.now()}`;
 
           const signal = await this.createSignalInDatabase({
             instanceId,
             symbol: instance.symbol,
             type: "entry",
             subType: "first",
-            price,
+            price, // ✅ 1M CLOSE price z DownerBandStateManager
             allocation: optimalEntry.actualAllocationPercent / 100,
             amount: optimalEntry.actualMargin,
             timestamp,
@@ -217,6 +191,7 @@ class SignalService extends EventEmitter {
               theoreticalAllocation: firstEntryPercent / 100,
               theoreticalQuantity: optimalEntry.theoreticalQuantity,
               adjustedQuantity: optimalEntry.adjustedQuantity,
+              priceSource: signalData.metadata?.priceSource || "1m_close", // ✅ DODANE
             },
           });
 
@@ -227,6 +202,7 @@ class SignalService extends EventEmitter {
               signal._id
             );
 
+            // ✅ PHEMEX API CALLS (bez zmian)
             if (instance.phemexConfig && instance.phemexConfig.apiKey) {
               try {
                 await phemexService.setLeverage(
@@ -275,19 +251,20 @@ class SignalService extends EventEmitter {
               }
             }
 
+            // ✅ UTWORZENIE POZYCJI
             const newPosition = {
               instanceId,
               symbol: instance.symbol,
               positionId: positionId,
               entryTime: timestamp,
-              entryPrice: price,
+              entryPrice: price, // ✅ 1M CLOSE price
               capitalAllocation: optimalEntry.actualAllocationPercent / 100,
               capitalAmount: optimalEntry.actualMargin,
               status: "active",
               entries: [
                 {
                   time: timestamp,
-                  price,
+                  price, // ✅ 1M CLOSE price
                   type,
                   trend,
                   allocation: optimalEntry.actualAllocationPercent / 100,
@@ -301,14 +278,17 @@ class SignalService extends EventEmitter {
             };
 
             this.activePositions.set(instanceId, newPosition);
+
+            // ✅ SYNC Z DOWNERBAND STATE MANAGER
             this.lastEntryTimes.set(instanceId, timestamp);
+            downerBandStateManager.updateLastEntryTime(instanceId, timestamp);
 
             await this._atomicStateReset(instanceId);
 
             TradingLogger.logEntry(
               instanceId,
               instance.symbol,
-              price,
+              price, // ✅ 1M CLOSE price w logu
               "First entry",
               trend,
               optimalEntry.actualAllocationPercent / 100,
@@ -332,6 +312,7 @@ class SignalService extends EventEmitter {
             });
           }
         } else if (currentPosition.status === "active") {
+          // ✅ DODATKOWE WEJŚCIA (second/third)
           const entryCount = currentPosition.entries.length;
 
           if (entryCount >= 3) {
@@ -348,7 +329,11 @@ class SignalService extends EventEmitter {
             return;
           }
 
+          // ✅ WALIDACJA CZASU - możliwość użycia z DownerBandStateManager lub lokalnej kopii
           const lastEntryTime = this.lastEntryTimes.get(instanceId) || 0;
+          const minEntryTimeGap =
+            strategyParams.signals?.minEntryTimeGap || 7200000;
+
           if (timestamp - lastEntryTime < minEntryTimeGap) {
             const rejectionKey = `${instanceId}-time-gap`;
             this.lastRejectionLogs.set(
@@ -363,41 +348,17 @@ class SignalService extends EventEmitter {
             return;
           }
 
-          const checkEMATrend = strategyParams.signals?.checkEMATrend !== false;
-          if (checkEMATrend && !this._isTrendValidForEntry(trend)) {
-            const rejectionKey = `${instanceId}-trend-${entryCount + 1}`;
-            this.lastRejectionLogs.set(
-              rejectionKey,
-              TradingLogger.logSignalRejected(
-                instanceId,
-                instance.symbol,
-                `Bad trend for entry ${entryCount + 1}: ${trend}`,
-                this.lastRejectionLogs.get(rejectionKey)
-              )
-            );
-
-            await this.createSignalInDatabase({
-              instanceId,
-              symbol: instance.symbol,
-              type: "entry-rejected",
-              subType: `trend-filter-${entryCount + 1}`,
-              price,
-              timestamp,
-              status: "canceled",
-              metadata: { trend },
-            });
-            return;
-          }
-
           const remainingBalance = instance.financials.availableBalance;
           let allocationPercent = 0;
           let entryType = "";
 
           if (entryCount === 1) {
-            allocationPercent = secondEntryPercent;
+            allocationPercent =
+              strategyParams.capitalAllocation?.secondEntry * 100 || 25;
             entryType = "second";
           } else if (entryCount === 2) {
-            allocationPercent = thirdEntryPercent;
+            allocationPercent =
+              strategyParams.capitalAllocation?.thirdEntry * 100 || 50;
             entryType = "third";
           }
 
@@ -416,7 +377,7 @@ class SignalService extends EventEmitter {
             symbol: currentPosition.symbol,
             type: "entry",
             subType: entryType,
-            price,
+            price, // ✅ 1M CLOSE price
             allocation: optimalEntry.actualAllocationPercent / 100,
             amount: optimalEntry.actualMargin,
             timestamp,
@@ -427,6 +388,7 @@ class SignalService extends EventEmitter {
               theoreticalAllocation: allocationPercent / 100,
               theoreticalQuantity: optimalEntry.theoreticalQuantity,
               adjustedQuantity: optimalEntry.adjustedQuantity,
+              priceSource: signalData.metadata?.priceSource || "1m_close", // ✅ DODANE
             },
           });
 
@@ -437,6 +399,7 @@ class SignalService extends EventEmitter {
               signal._id
             );
 
+            // ✅ PHEMEX API dla dodatkowych wejść (bez zmian)
             if (instance.phemexConfig && instance.phemexConfig.apiKey) {
               try {
                 const orderResult = await phemexService.openPosition(
@@ -472,9 +435,10 @@ class SignalService extends EventEmitter {
               }
             }
 
+            // ✅ AKTUALIZACJA POZYCJI
             currentPosition.entries.push({
               time: timestamp,
-              price,
+              price, // ✅ 1M CLOSE price
               type,
               trend,
               allocation: optimalEntry.actualAllocationPercent / 100,
@@ -487,12 +451,15 @@ class SignalService extends EventEmitter {
             currentPosition.capitalAllocation +=
               optimalEntry.actualAllocationPercent / 100;
             currentPosition.capitalAmount += optimalEntry.actualMargin;
+
+            // ✅ SYNC Z DOWNERBAND STATE MANAGER
             this.lastEntryTimes.set(instanceId, timestamp);
+            downerBandStateManager.updateLastEntryTime(instanceId, timestamp);
 
             TradingLogger.logEntry(
               instanceId,
               instance.symbol,
-              price,
+              price, // ✅ 1M CLOSE price w logu
               `${entryType} entry`,
               trend,
               optimalEntry.actualAllocationPercent / 100,
@@ -529,6 +496,8 @@ class SignalService extends EventEmitter {
       try {
         const analysisService = require("./analysis.service");
         await analysisService.resetUpperBandState(instanceId);
+        // ✅ DODANE - reset stanu entry
+        await analysisService.resetDownerBandState(instanceId);
         await analysisService.resetTrailingStopTracking(instanceId);
       } catch (error) {
         logger.error(`Error in atomic state reset: ${error.message}`);
@@ -536,6 +505,7 @@ class SignalService extends EventEmitter {
     });
   }
 
+  // ✅ POZOSTAŁE METODY BEZ ZMIAN
   _isTrendValidForEntry(trend) {
     return ["up", "strong_up", "neutral"].includes(trend);
   }

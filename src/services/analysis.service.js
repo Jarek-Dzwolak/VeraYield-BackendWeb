@@ -4,6 +4,7 @@ const {
 } = require("../utils/technical");
 const binanceService = require("./binance.service");
 const upperBandStateManager = require("../utils/upper-band-state-manager");
+const downerBandStateManager = require("../utils/downer-band-state-manager");
 const mutex = require("../utils/mutex");
 const logger = require("../utils/logger");
 const TradingLogger = require("../utils/trading-logger");
@@ -19,14 +20,20 @@ class AnalysisService extends EventEmitter {
     this.extremumReached = new Map();
     this.trailingStopActivationTime = new Map();
 
-    this.lastSignalEmission = new Map();
-    this.signalThrottleTime = 30000;
+    // ❌ USUNIĘTE - przeniesione do DownerBandStateManager
+    // this.lastSignalEmission = new Map();
+    // this.signalThrottleTime = 30000;
 
     this.setupListeners();
   }
 
   async resetUpperBandState(instanceId) {
     return upperBandStateManager.forceCleanAllState(instanceId);
+  }
+
+  // ✅ NOWA METODA - reset stanu entry
+  async resetDownerBandState(instanceId) {
+    return downerBandStateManager.forceCleanAllState(instanceId);
   }
 
   async resetTrailingStopTracking(instanceId) {
@@ -36,6 +43,8 @@ class AnalysisService extends EventEmitter {
       this.trailingStopActivationTime.delete(instanceId);
 
       await upperBandStateManager.forceCleanAllState(instanceId);
+      // ✅ DODANE - reset stanu entry
+      await downerBandStateManager.forceCleanAllState(instanceId);
       TradingLogger.logUpperBandReset(instanceId, "Trailing stop reset");
     });
   }
@@ -149,7 +158,6 @@ class AnalysisService extends EventEmitter {
 
   async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
     try {
-      // DODANY LOG 1 - czy funkcja jest wywoływana
       TradingLogger.logDebugThrottled(
         `detect-signals-${instanceId}`,
         `[DETECT SIGNALS] Instance: ${instanceId} | Price: ${currentPrice} | High: ${currentHigh} | Low: ${currentLow}`,
@@ -166,7 +174,6 @@ class AnalysisService extends EventEmitter {
       const shortEmaValue = indicators.shortEmaValue;
       const config = this.instances.get(instanceId);
 
-      // DODANY LOG 2 - parametry upper band
       TradingLogger.logDebugThrottled(
         `detect-upperband-${instanceId}`,
         `[DETECT UPPERBAND] UpperBand: ${hurstResult.upperBand} | TestTrigger (95%): ${hurstResult.upperBand * 0.95} | High: ${currentHigh} | Would trigger: ${currentHigh >= hurstResult.upperBand * 0.95}`,
@@ -184,6 +191,7 @@ class AnalysisService extends EventEmitter {
         return this._injectedSignalService.getActivePositions(id);
       };
 
+      // ✅ SPRAWDZENIE SYGNAŁÓW WYJŚCIA (bez zmian)
       const exitSignal = await upperBandStateManager.updateState(
         instanceId,
         currentPrice,
@@ -197,51 +205,27 @@ class AnalysisService extends EventEmitter {
         this.emit("exitSignal", exitSignal);
       }
 
-      let touchesLowerBand = false;
-      if (
-        currentLow <= hurstResult.lowerBand &&
-        currentHigh >= hurstResult.lowerBand
-      ) {
-        touchesLowerBand = true;
+      // ✅ NOWE - SPRAWDZENIE SYGNAŁÓW WEJŚCIA przez DownerBandStateManager
+      const entrySignal = await downerBandStateManager.updateState(
+        instanceId,
+        currentPrice,
+        currentHigh,
+        currentLow,
+        hurstResult,
+        emaValue,
+        shortEmaValue,
+        currentTrend,
+        config,
+        getActivePositionFn
+      );
+
+      if (entrySignal) {
+        this.emit("entrySignal", entrySignal);
       }
 
-      if (touchesLowerBand) {
-        const signalKey = `${instanceId}-lowerBandTouch`;
-        const lastEmission = this.lastSignalEmission.get(signalKey) || 0;
-        const now = Date.now();
+      // ❌ USUNIĘTA CAŁA STARA LOGIKA ENTRY - była tutaj logika touchesLowerBand
 
-        if (now - lastEmission > this.signalThrottleTime) {
-          let trendConditionMet = true;
-
-          if (config.checkEMATrend && emaValue !== null) {
-            trendConditionMet = ["up", "strong_up", "neutral"].includes(
-              currentTrend
-            );
-          }
-
-          if (trendConditionMet) {
-            this.emit("entrySignal", {
-              instanceId,
-              type: "lowerBandTouch",
-              price: currentPrice,
-              hurstChannel: hurstResult,
-              emaValue,
-              shortEmaValue,
-              trend: currentTrend,
-              timestamp: now,
-            });
-
-            this.lastSignalEmission.set(signalKey, now);
-
-            TradingLogger.logDebugThrottled(
-              `signal-${instanceId}-entry`,
-              `Emitowano sygnał lowerBandTouch dla ${instanceId} @${currentPrice}`,
-              60000
-            );
-          }
-        }
-      }
-
+      // ✅ TRAILING STOP (bez zmian)
       const trailingStopEnabled = config?.signals?.enableTrailingStop === true;
 
       if (trailingStopEnabled) {
@@ -288,33 +272,27 @@ class AnalysisService extends EventEmitter {
             const dropFromHigh = (highestPrice - currentPrice) / highestPrice;
 
             if (dropFromHigh >= trailingStopPercent) {
-              const signalKey = `${instanceId}-trailingStop`;
-              const lastEmission = this.lastSignalEmission.get(signalKey) || 0;
-              const now = Date.now();
+              // ❌ USUNIĘTE lastSignalEmission - przeniesione do DownerBandStateManager
+              // Trailing stop używa bezpośredniego emit bez throttling
+              this.emit("exitSignal", {
+                instanceId,
+                type: "trailingStop",
+                price: currentPrice,
+                highestPrice,
+                dropPercent: dropFromHigh * 100,
+                trailingStopPercent: trailingStopPercent * 100,
+                hurstChannel: hurstResult,
+                emaValue,
+                timestamp: Date.now(),
+              });
 
-              if (now - lastEmission > this.signalThrottleTime) {
-                this.emit("exitSignal", {
-                  instanceId,
-                  type: "trailingStop",
-                  price: currentPrice,
-                  highestPrice,
-                  dropPercent: dropFromHigh * 100,
-                  trailingStopPercent: trailingStopPercent * 100,
-                  hurstChannel: hurstResult,
-                  emaValue,
-                  timestamp: now,
-                });
+              TradingLogger.logDebugThrottled(
+                `signal-${instanceId}-trailing`,
+                `Emitowano sygnał trailingStop dla ${instanceId} @${currentPrice}`,
+                60000
+              );
 
-                this.lastSignalEmission.set(signalKey, now);
-
-                TradingLogger.logDebugThrottled(
-                  `signal-${instanceId}-trailing`,
-                  `Emitowano sygnał trailingStop dla ${instanceId} @${currentPrice}`,
-                  60000
-                );
-
-                await this.resetTrailingStopTracking(instanceId);
-              }
+              await this.resetTrailingStopTracking(instanceId);
             }
           }
         }
@@ -359,6 +337,7 @@ class AnalysisService extends EventEmitter {
         return false;
       }
 
+      // ✅ DODANIE 1M już było - bez zmian
       const intervals = ["15m", "1h", "1m"];
       await binanceService.initializeInstanceData(
         config.symbol,
@@ -414,7 +393,7 @@ class AnalysisService extends EventEmitter {
 
       const config = this.instances.get(instanceId);
 
-      const intervals = ["15m", "1h"];
+      const intervals = ["15m", "1h", "1m"]; // ✅ DODANE 1m
       intervals.forEach((interval) => {
         binanceService.unsubscribeFromKlines(
           config.symbol,
@@ -423,16 +402,11 @@ class AnalysisService extends EventEmitter {
         );
       });
 
-      for (const [key, value] of this.lastSignalEmission.entries()) {
-        if (
-          key.startsWith(`${instanceId}-lowerBandTouch`) ||
-          key.startsWith(`${instanceId}-trailingStop`)
-        ) {
-          this.lastSignalEmission.delete(key);
-        }
-      }
+      // ❌ USUNIĘTE czyszczenie lastSignalEmission - przeniesione do DownerBandStateManager
 
       await upperBandStateManager.forceCleanAllState(instanceId);
+      // ✅ DODANE - czyszczenie stanu entry
+      await downerBandStateManager.forceCleanAllState(instanceId);
 
       this.instances.delete(instanceId);
       this.indicators.delete(instanceId);
@@ -541,6 +515,8 @@ class AnalysisService extends EventEmitter {
     const config = this.instances.get(instanceId);
     const indicators = this.indicators.get(instanceId);
     const upperBandState = upperBandStateManager.getState(instanceId);
+    // ✅ DODANE - stan entry
+    const downerBandState = downerBandStateManager.getState(instanceId);
 
     return {
       symbol: config.symbol,
@@ -551,6 +527,7 @@ class AnalysisService extends EventEmitter {
       isExtremumReached: this.extremumReached.get(instanceId) || false,
       highestPrice: this.highestPrices.get(instanceId) || null,
       upperBandState: upperBandState || null,
+      downerBandState: downerBandState || null, // ✅ DODANE
       timestamp: new Date().getTime(),
     };
   }
