@@ -49,7 +49,7 @@ class DownerBandStateManager {
     });
   }
 
-  // ✅ KOPIUJ z UpperBandStateManager - pobieranie 1M CLOSE
+  // ✅ Pobieranie 1M CLOSE - identyczne jak w UpperBandStateManager
   async _get1MinutePrice(instanceId) {
     try {
       const binanceService = require("../services/binance.service");
@@ -165,15 +165,8 @@ class DownerBandStateManager {
       );
     }
 
-    // ✅ SPRAWDZENIE DOTKNIĘCIA DOLNEJ BANDY z 1M precision
-    let touchesLowerBand = false;
-    if (
-      currentLow <= hurstResult.lowerBand && // 15m LOW musi sięgnąć bandy
-      currentHigh >= hurstResult.lowerBand && // 15m HIGH musi być powyżej bandy
-      priceForDecisions <= hurstResult.lowerBand * 1.002 // 1M CLOSE blisko bandy (+0.2% tolerancja)
-    ) {
-      touchesLowerBand = true;
-    }
+    // ✅ NOWA LOGIKA: TYLKO 1M CLOSE <= lowerBand (identycznie jak UpperBandStateManager)
+    const touchesLowerBand = priceForDecisions <= hurstResult.lowerBand;
 
     if (touchesLowerBand) {
       // ✅ THROTTLING - nie częściej niż co 30s
@@ -192,7 +185,7 @@ class DownerBandStateManager {
           const entrySignal = {
             instanceId,
             type: "lowerBandTouch",
-            price: priceForDecisions, // ← 1M CLOSE zamiast 15M
+            price: priceForDecisions, // ← 1M CLOSE
             hurstChannel: hurstResult,
             emaValue,
             shortEmaValue,
@@ -205,6 +198,7 @@ class DownerBandStateManager {
                 (priceForDecisions / hurstResult.lowerBand - 1) *
                 100
               ).toFixed(3),
+              entryLogic: "pure_1m_close", // ← Nowa informacja
             },
           };
 
@@ -212,7 +206,7 @@ class DownerBandStateManager {
 
           TradingLogger.logDebugThrottled(
             `signal-${instanceId}-entry`,
-            `[ENTRY SIGNAL] ${config.symbol} | 1m CLOSE: ${priceForDecisions} touches band: ${hurstResult.lowerBand.toFixed(2)} | Trend: ${trend} | Instance: ${instanceId.slice(-8)}`,
+            `[ENTRY SIGNAL] ${config.symbol} | 1m CLOSE: ${priceForDecisions} <= band: ${hurstResult.lowerBand.toFixed(2)} | Trend: ${trend} | Instance: ${instanceId.slice(-8)}`,
             60000
           );
 
@@ -221,7 +215,7 @@ class DownerBandStateManager {
           // ✅ LOG ODRZUCENIA przez trend
           TradingLogger.logDebugThrottled(
             `entry-trend-reject-${instanceId}`,
-            `[ENTRY REJECTED] Bad trend: ${trend} | Instance: ${instanceId.slice(-8)}`,
+            `[ENTRY REJECTED] Bad trend: ${trend} (1m CLOSE: ${priceForDecisions} <= band: ${hurstResult.lowerBand.toFixed(2)}) | Instance: ${instanceId.slice(-8)}`,
             120000
           );
         }
@@ -230,7 +224,7 @@ class DownerBandStateManager {
         const timeSinceLastSignal = Math.floor((now - lastEmission) / 1000);
         TradingLogger.logDebugThrottled(
           `entry-throttle-${instanceId}`,
-          `[ENTRY THROTTLED] Last signal ${timeSinceLastSignal}s ago | Instance: ${instanceId.slice(-8)}`,
+          `[ENTRY THROTTLED] 1m CLOSE: ${priceForDecisions} <= band, but last signal ${timeSinceLastSignal}s ago | Instance: ${instanceId.slice(-8)}`,
           60000
         );
       }
@@ -275,18 +269,12 @@ class DownerBandStateManager {
       return null;
     }
 
-    // ✅ SPRAWDŹ WARUNKI TECHNICZNE (analogicznie jak pierwszte wejście)
+    // ✅ SPRAWDŹ WARUNKI TECHNICZNE - NOWA LOGIKA (tylko 1M CLOSE)
     const oneMinPrice = await this._get1MinutePrice(instanceId);
     const priceForDecisions = oneMinPrice || currentPrice;
 
-    let touchesLowerBand = false;
-    if (
-      currentLow <= hurstResult.lowerBand &&
-      currentHigh >= hurstResult.lowerBand &&
-      priceForDecisions <= hurstResult.lowerBand * 1.002
-    ) {
-      touchesLowerBand = true;
-    }
+    // ✅ NOWA LOGIKA: TYLKO 1M CLOSE <= lowerBand
+    const touchesLowerBand = priceForDecisions <= hurstResult.lowerBand;
 
     if (touchesLowerBand) {
       // ✅ SPRAWDŹ TREND dla dodatkowego wejścia
@@ -302,7 +290,7 @@ class DownerBandStateManager {
           instanceId,
           type: "lowerBandTouch",
           subType: entryType,
-          price: priceForDecisions,
+          price: priceForDecisions, // ← 1M CLOSE
           hurstChannel: hurstResult,
           emaValue,
           shortEmaValue,
@@ -316,6 +304,7 @@ class DownerBandStateManager {
               (priceForDecisions / hurstResult.lowerBand - 1) *
               100
             ).toFixed(3),
+            entryLogic: "pure_1m_close", // ← Nowa informacja
           },
         };
 
@@ -324,11 +313,18 @@ class DownerBandStateManager {
 
         TradingLogger.logDebugThrottled(
           `signal-${instanceId}-${entryType}`,
-          `[${entryType.toUpperCase()} ENTRY] ${config.symbol} | 1m CLOSE: ${priceForDecisions} | Instance: ${instanceId.slice(-8)}`,
+          `[${entryType.toUpperCase()} ENTRY] ${config.symbol} | 1m CLOSE: ${priceForDecisions} <= band: ${hurstResult.lowerBand.toFixed(2)} | Instance: ${instanceId.slice(-8)}`,
           60000
         );
 
         return entrySignal;
+      } else {
+        // ✅ LOG ODRZUCENIA przez trend dla multiple entries
+        TradingLogger.logDebugThrottled(
+          `entry-trend-reject-multiple-${instanceId}`,
+          `[MULTIPLE ENTRY REJECTED] Bad trend: ${trend} (1m CLOSE: ${priceForDecisions} <= band: ${hurstResult.lowerBand.toFixed(2)}) | Instance: ${instanceId.slice(-8)}`,
+          120000
+        );
       }
     }
 
