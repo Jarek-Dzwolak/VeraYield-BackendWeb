@@ -62,6 +62,37 @@ class UpperBandStateManager {
     });
   }
 
+  // ✅ NOWA METODA: Pobierz 1m CLOSE cenę
+  async _get1MinutePrice(instanceId) {
+    try {
+      const binanceService = require("../services/binance.service");
+      const analysisService = require("../services/analysis.service");
+
+      // Pobierz konfigurację instancji
+      const instances = analysisService.instances;
+      const config = instances?.get(instanceId);
+
+      if (!config?.symbol) {
+        return null; // Fallback do 15m danych
+      }
+
+      const candles1m = binanceService.getCachedCandles(config.symbol, "1m");
+
+      if (!candles1m || candles1m.length === 0) {
+        return null; // Fallback do 15m danych
+      }
+
+      // Ostatnia zamknięta 1m świeca
+      const lastCandle = candles1m[candles1m.length - 1];
+      return lastCandle.close;
+    } catch (error) {
+      logger.error(
+        `Error getting 1m price for ${instanceId}: ${error.message}`
+      );
+      return null; // Fallback do 15m danych
+    }
+  }
+
   async updateState(
     instanceId,
     currentPrice,
@@ -99,11 +130,29 @@ class UpperBandStateManager {
         const upperBand = hurstResult.upperBand;
         const exitTrigger = upperBand * 1.0009;
         const returnTrigger = upperBand * 0.999;
-        const exitResetTrigger = upperBand * 0.998;
-        const returnResetTrigger = upperBand * 1.002;
+        const exitResetTrigger = upperBand * 0.999;
+        const returnResetTrigger = upperBand * 1.0009;
+
+        // ✅ NOWE: Pobierz 1m cenę do decyzji
+        const oneMinPrice = await this._get1MinutePrice(instanceId);
+        const priceForDecisions = oneMinPrice || currentPrice; // Fallback na 15m
+
+        // Log info o źródle danych
+        if (oneMinPrice) {
+          TradingLogger.logDebugThrottled(
+            `1m-price-${instanceId}`,
+            `[1M PRICE] Using 1m CLOSE: ${oneMinPrice} vs 15m: ${currentPrice}`,
+            300000 // co 5 minut
+          );
+        }
 
         if (now - timers.lastLogTime > 120000) {
-          this.logStateProgress(instanceId, state, currentPrice, upperBand);
+          this.logStateProgress(
+            instanceId,
+            state,
+            priceForDecisions,
+            upperBand
+          );
           timers.lastLogTime = now;
         }
 
@@ -111,8 +160,7 @@ class UpperBandStateManager {
           case "waiting_for_exit":
             return this.handleWaitingForExit(
               instanceId,
-              currentPrice,
-              currentHigh,
+              priceForDecisions,
               exitTrigger,
               upperBand,
               now
@@ -121,8 +169,7 @@ class UpperBandStateManager {
           case "exit_counting":
             return this.handleExitCounting(
               instanceId,
-              currentPrice,
-              currentLow,
+              priceForDecisions,
               upperBand,
               exitResetTrigger,
               now
@@ -131,8 +178,7 @@ class UpperBandStateManager {
           case "waiting_for_return":
             return this.handleWaitingForReturn(
               instanceId,
-              currentPrice,
-              currentLow,
+              priceForDecisions,
               returnTrigger,
               upperBand,
               now
@@ -141,8 +187,7 @@ class UpperBandStateManager {
           case "return_counting":
             return this.handleReturnCounting(
               instanceId,
-              currentPrice,
-              currentHigh,
+              priceForDecisions,
               upperBand,
               returnResetTrigger,
               now
@@ -157,29 +202,36 @@ class UpperBandStateManager {
     });
   }
 
+  // ✅ ZMIENIONE: Używa 1m CLOSE zamiast 15m HIGH
   handleWaitingForExit(
     instanceId,
-    currentPrice,
-    currentHigh,
+    priceForDecisions,
     exitTrigger,
     upperBand,
     now
   ) {
-    if (currentHigh >= exitTrigger) {
+    if (priceForDecisions >= exitTrigger) {
+      // ← 1m CLOSE zamiast currentHigh
       const state = this.upperBandStates.get(instanceId);
       state.currentState = "exit_counting";
       state.stateStartTime = now;
-      state.triggerPrice = currentPrice;
+      state.triggerPrice = priceForDecisions;
       state.bandLevel = upperBand;
       state.resetConditionMet = false;
+
+      TradingLogger.logUpperBandState(
+        instanceId,
+        "exit_started",
+        `1m CLOSE ${priceForDecisions} >= trigger ${exitTrigger.toFixed(2)}`
+      );
     }
     return null;
   }
 
+  // ✅ ZMIENIONE: Używa 1m CLOSE zamiast 15m LOW
   handleExitCounting(
     instanceId,
-    currentPrice,
-    currentLow,
+    priceForDecisions,
     upperBand,
     exitResetTrigger,
     now
@@ -187,18 +239,19 @@ class UpperBandStateManager {
     const state = this.upperBandStates.get(instanceId);
     const timeElapsed = now - state.stateStartTime;
 
-    if (currentLow <= exitResetTrigger) {
+    if (priceForDecisions <= exitResetTrigger) {
+      // ← 1m CLOSE zamiast currentLow
       if (!state.resetConditionMet) {
         state.resetConditionMet = true;
         state.resetStartTime = now;
         TradingLogger.logUpperBandState(
           instanceId,
           "exit_reset_warning",
-          `Price ${currentPrice} < ${exitResetTrigger.toFixed(2)} (-0.5%), reset timer started`
+          `1m CLOSE ${priceForDecisions} <= reset ${exitResetTrigger.toFixed(2)} (-0.2%), reset timer started`
         );
       } else {
         const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 15 * 60 * 1000) {
+        if (resetTimeElapsed >= 7.5 * 60 * 1000) {
           state.currentState = "waiting_for_exit";
           state.stateStartTime = null;
           state.resetConditionMet = false;
@@ -210,16 +263,17 @@ class UpperBandStateManager {
           return null;
         }
       }
-    } else if (state.resetConditionMet && currentLow > upperBand) {
+    } else if (state.resetConditionMet && priceForDecisions > upperBand) {
+      // ← 1m CLOSE
       state.resetConditionMet = false;
       TradingLogger.logUpperBandState(
         instanceId,
         "exit_reset_cancelled",
-        "Price back above band"
+        "1m CLOSE back above band"
       );
     }
 
-    if (timeElapsed >= 15 * 60 * 1000) {
+    if (timeElapsed >= 7.5 * 60 * 1000) {
       state.currentState = "waiting_for_return";
       state.stateStartTime = null;
       state.resetConditionMet = false;
@@ -233,35 +287,36 @@ class UpperBandStateManager {
     return null;
   }
 
+  // ✅ ZMIENIONE: Używa 1m CLOSE zamiast 15m LOW
   handleWaitingForReturn(
     instanceId,
-    currentPrice,
-    currentLow,
+    priceForDecisions,
     returnTrigger,
     upperBand,
     now
   ) {
-    if (currentLow <= returnTrigger) {
+    if (priceForDecisions <= returnTrigger) {
+      // ← 1m CLOSE zamiast currentLow
       const state = this.upperBandStates.get(instanceId);
       state.currentState = "return_counting";
       state.stateStartTime = now;
-      state.triggerPrice = currentPrice;
+      state.triggerPrice = priceForDecisions;
       state.bandLevel = upperBand;
       state.resetConditionMet = false;
 
       TradingLogger.logUpperBandState(
         instanceId,
         "return_started",
-        `Counting return (${currentPrice} < ${returnTrigger.toFixed(2)} -0.2%)`
+        `1m CLOSE ${priceForDecisions} <= trigger ${returnTrigger.toFixed(2)} (-0.1%)`
       );
     }
     return null;
   }
 
+  // ✅ ZMIENIONE: Używa 1m CLOSE zamiast 15m HIGH
   handleReturnCounting(
     instanceId,
-    currentPrice,
-    currentHigh,
+    priceForDecisions,
     upperBand,
     returnResetTrigger,
     now
@@ -269,18 +324,19 @@ class UpperBandStateManager {
     const state = this.upperBandStates.get(instanceId);
     const timeElapsed = now - state.stateStartTime;
 
-    if (currentHigh >= returnResetTrigger) {
+    if (priceForDecisions >= returnResetTrigger) {
+      // ← 1m CLOSE zamiast currentHigh
       if (!state.resetConditionMet) {
         state.resetConditionMet = true;
         state.resetStartTime = now;
         TradingLogger.logUpperBandState(
           instanceId,
           "return_reset_warning",
-          `Price ${currentPrice} > ${returnResetTrigger.toFixed(2)} (+0.5%), reset timer started`
+          `1m CLOSE ${priceForDecisions} >= reset ${returnResetTrigger.toFixed(2)} (+0.2%), reset timer started`
         );
       } else {
         const resetTimeElapsed = now - state.resetStartTime;
-        if (resetTimeElapsed >= 15 * 60 * 1000) {
+        if (resetTimeElapsed >= 7.5 * 60 * 1000) {
           state.currentState = "waiting_for_return";
           state.stateStartTime = null;
           state.resetConditionMet = false;
@@ -292,27 +348,29 @@ class UpperBandStateManager {
           return null;
         }
       }
-    } else if (state.resetConditionMet && currentHigh < upperBand) {
+    } else if (state.resetConditionMet && priceForDecisions < upperBand) {
+      // ← 1m CLOSE
       state.resetConditionMet = false;
       TradingLogger.logUpperBandState(
         instanceId,
         "return_reset_cancelled",
-        "Price back below band"
+        "1m CLOSE back below band"
       );
     }
 
-    if (timeElapsed >= 15 * 60 * 1000) {
+    if (timeElapsed >= 7.5 * 60 * 1000) {
       const exitSignal = {
         instanceId,
         type: "upperBandReturn",
-        price: currentPrice,
+        price: priceForDecisions, // ← 1m CLOSE
         hurstChannel: { upperBand },
         timestamp: now,
         metadata: {
           exitReason: "Confirmed return to channel after 15 minutes",
           totalCycleTime: "30+ minutes",
-          returnTrigger: state.bandLevel * 0.998,
-          finalPrice: currentPrice,
+          returnTrigger: state.bandLevel * 0.999,
+          finalPrice: priceForDecisions, // ← 1m CLOSE
+          priceSource: "1m_close", // ← Info o źródle
         },
       };
 
@@ -323,7 +381,7 @@ class UpperBandStateManager {
       TradingLogger.logUpperBandState(
         instanceId,
         "return_confirmed",
-        `POSITION CLOSED - Return confirmed after 15 min`
+        `POSITION CLOSED - Return confirmed after 15 min (1m CLOSE: ${priceForDecisions})`
       );
 
       return exitSignal;

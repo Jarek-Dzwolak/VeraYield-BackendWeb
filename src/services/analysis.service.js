@@ -359,7 +359,7 @@ class AnalysisService extends EventEmitter {
         return false;
       }
 
-      const intervals = ["15m", "1h"];
+      const intervals = ["15m", "1h", "1m"];
       await binanceService.initializeInstanceData(
         config.symbol,
         intervals,
