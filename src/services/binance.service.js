@@ -89,7 +89,32 @@ class BinanceService extends EventEmitter {
           `[API] ${symbol}/${interval}: ostatnia świeca sprzed ${Math.floor(candleAge / 60000)} minut`
         );
       }
+      if (endTime && !startTime && candles.length > 0) {
+        const firstCandle = candles[0];
+        const lastCandle = candles[candles.length - 1];
 
+        console.log("=== TIMEZONE DEBUG ===");
+        console.log("Symbol/Interval:", symbol, interval);
+        console.log(
+          "endTime sent to Binance:",
+          new Date(endTime).toISOString()
+        );
+        console.log("lastCandle.closeTime raw:", lastCandle.closeTime);
+        console.log(
+          "lastCandle.closeTime UTC:",
+          new Date(lastCandle.closeTime).toISOString()
+        );
+        console.log("lastCandle.close price:", lastCandle.close);
+        console.log("Date.now():", Date.now());
+        console.log("Date.now() UTC:", new Date().toISOString());
+        console.log(
+          "First->Last range:",
+          new Date(firstCandle.openTime).toISOString(),
+          "->",
+          new Date(lastCandle.closeTime).toISOString()
+        );
+        console.log("===================");
+      }
       // Zapisz dane w pamięci
       const key = `${symbol}-${interval}`;
       this.candleData.set(key, candles);

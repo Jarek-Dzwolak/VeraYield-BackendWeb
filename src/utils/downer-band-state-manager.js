@@ -71,6 +71,21 @@ class DownerBandStateManager {
 
       // Ostatnia zamknięta 1m świeca
       const lastCandle = candles1m[candles1m.length - 1];
+      console.log("=== 1M PRICE DEBUG ===");
+      console.log("Instance:", instanceId.slice(-8));
+      console.log("Symbol:", config.symbol);
+      console.log("1m candles count:", candles1m.length);
+      console.log("Last 1m candle price:", lastCandle.close);
+      console.log(
+        "Last 1m candle time:",
+        new Date(lastCandle.closeTime).toISOString()
+      );
+      console.log(
+        "1m candle age:",
+        Math.floor((Date.now() - lastCandle.closeTime) / 60000),
+        "min"
+      );
+      console.log("===================");
       return lastCandle.close;
     } catch (error) {
       logger.error(
@@ -201,6 +216,24 @@ class DownerBandStateManager {
               entryLogic: "pure_1m_close", // ← Nowa informacja
             },
           };
+
+          console.log("=== ENTRY SIGNAL GENERATION ===");
+          console.log("Instance:", instanceId.slice(-8));
+          console.log("Signal price (1m close):", priceForDecisions);
+          console.log("15m currentPrice fallback:", currentPrice);
+          console.log("oneMinPrice:", oneMinPrice);
+          console.log(
+            "Price source:",
+            oneMinPrice ? "1m_close" : "15m_fallback"
+          );
+          console.log("Hurst lowerBand:", hurstResult.lowerBand);
+          console.log(
+            "Price vs band:",
+            ((priceForDecisions / hurstResult.lowerBand - 1) * 100).toFixed(3),
+            "%"
+          );
+          console.log("Timestamp:", new Date(now).toISOString());
+          console.log("===============================");
 
           this.lastSignalEmission.set(signalKey, now);
 
