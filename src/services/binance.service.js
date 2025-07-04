@@ -24,6 +24,8 @@ class BinanceService extends EventEmitter {
     this.candleData = new Map(); // Mapa danych świecowych (symbol+interval -> array of candles)
     this.pingIntervals = new Map(); // Mapa interwałów pingowania
     this.clientSubscriptions = new Map(); // Mapa subskrypcji klientów
+    // NOWE: Śledzenie czasu ostatniej aktualizacji
+    this.lastUpdateTime = new Map();
   }
 
   /**
@@ -155,12 +157,12 @@ class BinanceService extends EventEmitter {
             interval: message.k.i,
           };
 
-          // Zaktualizuj dane w pamięci - tylko dla zamkniętych świec
-          if (candle.isFinal) {
-            const dataKey = `${symbol}-${interval}`;
-            const existingCandles = this.candleData.get(dataKey) || [];
+          // ZMODYFIKOWANE: Dla 1m aktualizuj zawsze, dla innych tylko finalne
+          const dataKey = `${symbol}-${interval}`;
+          const existingCandles = this.candleData.get(dataKey) || [];
 
-            // Znajdź i zastąp istniejącą świecę o tym samym czasie otwarcia, jeśli istnieje
+          if (interval === "1m" || candle.isFinal) {
+            // Znajdź i zastąp istniejącą świecę o tym samym czasie otwarcia
             const existingIndex = existingCandles.findIndex(
               (c) => c.openTime === candle.openTime
             );
@@ -168,17 +170,18 @@ class BinanceService extends EventEmitter {
             if (existingIndex !== -1) {
               existingCandles[existingIndex] = candle;
             } else {
-              // Dodaj nową świecę i ogranicz rozmiar tablicy
               existingCandles.push(candle);
-
-              // Utrzymuj określoną liczbę świec (100 dla 1h, 25 dla 15m)
-              const maxCandles = interval === "1h" ? 100 : 25;
+              // Ogranicz liczbę świec
+              const maxCandles =
+                interval === "1m" ? 10 : interval === "1h" ? 100 : 25;
               if (existingCandles.length > maxCandles) {
-                existingCandles.shift(); // Usuń najstarszą świecę
+                existingCandles.shift();
               }
             }
 
             this.candleData.set(dataKey, existingCandles);
+            // NOWE: Zapisz czas aktualizacji
+            this.lastUpdateTime.set(dataKey, Date.now());
           }
 
           // Emituj zdarzenie z danymi dla KAŻDEJ aktualizacji, nie tylko zamkniętych świec
@@ -360,14 +363,87 @@ class BinanceService extends EventEmitter {
   }
 
   /**
-   * Pobiera aktualne dane świecowe z pamięci
+   * ZMODYFIKOWANA METODA: Sprawdź wiek i zwróć dane tylko jeśli są świeże
    * @param {string} symbol - Para handlowa
    * @param {string} interval - Interwał czasowy
    * @returns {Array|null} - Tablica danych świecowych lub null, jeśli brak danych
    */
   getCachedCandles(symbol, interval) {
     const key = `${symbol}-${interval}`;
-    return this.candleData.get(key) || null;
+    const candles = this.candleData.get(key);
+
+    if (!candles || candles.length === 0) {
+      return null;
+    }
+
+    // Sprawdź wiek ostatniej świecy
+    const lastCandle = candles[candles.length - 1];
+    const maxAge = interval === "1m" ? 120000 : 900000; // 2 min dla 1m, 15 min dla innych
+    const age = Date.now() - lastCandle.closeTime;
+
+    if (age > maxAge) {
+      logger.warn(
+        `[CACHE] Stale data for ${symbol} ${interval}, age: ${age / 1000}s, clearing...`
+      );
+      this.candleData.delete(key);
+      this.lastUpdateTime.delete(key);
+      return null;
+    }
+
+    return candles;
+  }
+
+  /**
+   * NOWA METODA: Wyczyść cały cache
+   */
+  clearAllCache() {
+    this.candleData.clear();
+    this.lastUpdateTime.clear();
+    logger.info("[CACHE] All market data cache cleared");
+  }
+
+  /**
+   * NOWA METODA: Sprawdź stan WebSocket
+   * @param {string} symbol - Para handlowa
+   * @param {string} interval - Interwał czasowy
+   * @param {string} instanceId - Identyfikator instancji strategii
+   * @returns {boolean} - True jeśli połączenie jest aktywne
+   */
+  isWebSocketConnected(symbol, interval, instanceId) {
+    const wsKey = `${symbol.toLowerCase()}-${interval}-${instanceId}`;
+    const ws = this.wsConnections.get(wsKey);
+    return ws && ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * NOWA METODA: Wymuś reconnect
+   * @param {string} symbol - Para handlowa
+   * @param {string} interval - Interwał czasowy
+   * @param {string} instanceId - Identyfikator instancji strategii
+   */
+  async forceReconnect(symbol, interval, instanceId) {
+    const wsKey = `${symbol.toLowerCase()}-${interval}-${instanceId}`;
+
+    // Zamknij istniejące połączenie
+    if (this.wsConnections.has(wsKey)) {
+      const ws = this.wsConnections.get(wsKey);
+      ws.close();
+      this.wsConnections.delete(wsKey);
+
+      // Wyczyść ping interval
+      const pingInterval = this.pingIntervals.get(wsKey);
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        this.pingIntervals.delete(wsKey);
+      }
+    }
+
+    // Otwórz nowe połączenie
+    logger.info(`[WS] Force reconnecting ${wsKey}...`);
+    this.subscribeToKlines(symbol, interval, instanceId);
+
+    // Poczekaj na połączenie
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   /**

@@ -62,34 +62,97 @@ class UpperBandStateManager {
     });
   }
 
-  // ✅ NOWA METODA: Pobierz 1m CLOSE cenę
   async _get1MinutePrice(instanceId) {
+    const MAX_WAIT_TIME = 30000; // 30 sekund max
+    const RETRY_INTERVAL = 2000; // Co 2 sekundy
+    const startTime = Date.now();
+
     try {
       const binanceService = require("../services/binance.service");
       const analysisService = require("../services/analysis.service");
 
-      // Pobierz konfigurację instancji
       const instances = analysisService.instances;
       const config = instances?.get(instanceId);
 
       if (!config?.symbol) {
-        return null; // Fallback do 15m danych
+        logger.warn(`[1M PRICE] No config for instance ${instanceId}`);
+        return null;
       }
 
-      const candles1m = binanceService.getCachedCandles(config.symbol, "1m");
+      // Pętla czekania na świeże dane
+      while (Date.now() - startTime < MAX_WAIT_TIME) {
+        // Sprawdź cache
+        const candles1m = binanceService.getCachedCandles(config.symbol, "1m");
 
-      if (!candles1m || candles1m.length === 0) {
-        return null; // Fallback do 15m danych
+        if (candles1m && candles1m.length > 0) {
+          const lastCandle = candles1m[candles1m.length - 1];
+          const age = Date.now() - lastCandle.openTime;
+
+          // Akceptuj świece do 90 sekund
+          if (age <= 90000) {
+            logger.debug(
+              `[1M PRICE] Using ${lastCandle.isFinal ? "final" : "live"} candle, age: ${age / 1000}s`
+            );
+            return lastCandle.close;
+          } else {
+            logger.warn(
+              `[1M PRICE] Data too old: ${age / 1000}s, waiting for fresh data...`
+            );
+          }
+        } else {
+          logger.warn(`[1M PRICE] No 1m candles in cache`);
+        }
+
+        // Sprawdź czy WebSocket działa
+        if (
+          !binanceService.isWebSocketConnected(config.symbol, "1m", instanceId)
+        ) {
+          logger.error(
+            `[1M PRICE] WebSocket not connected, forcing reconnect...`
+          );
+          await binanceService.forceReconnect(config.symbol, "1m", instanceId);
+        }
+
+        // Poczekaj przed następną próbą
+        logger.info(
+          `[1M PRICE] Waiting ${RETRY_INTERVAL / 1000}s for fresh data...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL));
       }
 
-      // Ostatnia zamknięta 1m świeca
-      const lastCandle = candles1m[candles1m.length - 1];
-      return lastCandle.close;
-    } catch (error) {
+      // Po 30 sekundach - alert ale nie rezygnuj
       logger.error(
-        `Error getting 1m price for ${instanceId}: ${error.message}`
+        `[1M PRICE] CRITICAL: Could not get fresh 1m data after ${MAX_WAIT_TIME / 1000}s!`
       );
-      return null; // Fallback do 15m danych
+      logger.error(
+        `[1M PRICE] Instance ${instanceId} may have connection issues`
+      );
+
+      // Spróbuj pobrać jedną świecę przez REST API jako last resort
+      try {
+        logger.info(
+          `[1M PRICE] Attempting to fetch fresh candle via REST API...`
+        );
+        await binanceService.getHistoricalCandles(config.symbol, "1m", 1);
+
+        const freshCandles = binanceService.getCachedCandles(
+          config.symbol,
+          "1m"
+        );
+        if (freshCandles && freshCandles.length > 0) {
+          const lastCandle = freshCandles[freshCandles.length - 1];
+          logger.info(`[1M PRICE] Got fresh candle from REST API`);
+          return lastCandle.close;
+        }
+      } catch (apiError) {
+        logger.error(`[1M PRICE] REST API failed: ${apiError.message}`);
+      }
+
+      // Zwróć undefined - to spowoduje pominięcie tej iteracji
+      return undefined;
+    } catch (error) {
+      logger.error(`[1M PRICE] Error: ${error.message}`);
+      return undefined;
     }
   }
 

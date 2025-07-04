@@ -125,14 +125,14 @@ initializeApp().catch((error) => {
   process.exit(1);
 });
 
-// Obsługa zamknięcia serwera (graceful shutdown)
+// Zamień istniejącą funkcję shutdown na tę:
 const shutdown = async (signal) => {
   logger.info(
     `Otrzymano sygnał ${signal || "zamknięcia"}, zamykanie serwera...`
   );
 
-  // Zatrzymaj wszystkie instancje
   try {
+    // KLUCZOWE: Najpierw zatrzymaj wszystkie instancje
     logger.info("Zatrzymywanie instancji strategii...");
     await instanceService.stopAllInstances();
     logger.info("Zatrzymano wszystkie instancje strategii");
@@ -140,17 +140,26 @@ const shutdown = async (signal) => {
     logger.error(`Błąd podczas zatrzymywania instancji: ${error.message}`);
   }
 
-  // Zamknij połączenia WebSocket
   try {
+    // Zamknij połączenia WebSocket
     logger.info("Zamykanie połączeń WebSocket...");
-    wsService.closeAllConnections();
+    binanceService.closeAllConnections();
     logger.info("Zamknięto wszystkie połączenia WebSocket");
   } catch (error) {
     logger.error(`Błąd podczas zamykania połączeń WebSocket: ${error.message}`);
   }
 
-  // Zamknij połączenie z bazą danych
   try {
+    // NOWE: Wyczyść cache przed zamknięciem
+    logger.info("Czyszczenie cache danych rynkowych...");
+    binanceService.clearAllCache();
+    logger.info("Wyczyszczono cache danych rynkowych");
+  } catch (error) {
+    logger.error(`Błąd podczas czyszczenia cache: ${error.message}`);
+  }
+
+  try {
+    // Zamknij połączenie z bazą danych
     logger.info("Zamykanie połączenia z bazą danych...");
     await dbService.disconnect();
     logger.info("Zamknięto połączenie z bazą danych");
@@ -163,7 +172,6 @@ const shutdown = async (signal) => {
   // Zamknij serwer HTTP
   server.close(() => {
     logger.info("Serwer HTTP zamknięty");
-    // Wyjdź z kodem 0 (sukces)
     process.exit(0);
   });
 
