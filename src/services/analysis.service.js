@@ -16,13 +16,6 @@ class AnalysisService extends EventEmitter {
     this.instances = new Map();
     this.indicators = new Map();
     this.lastPrices = new Map();
-    this.highestPrices = new Map();
-    this.extremumReached = new Map();
-    this.trailingStopActivationTime = new Map();
-
-    // ❌ USUNIĘTE - przeniesione do DownerBandStateManager
-    // this.lastSignalEmission = new Map();
-    // this.signalThrottleTime = 30000;
 
     this.setupListeners();
   }
@@ -31,21 +24,19 @@ class AnalysisService extends EventEmitter {
     return upperBandStateManager.forceCleanAllState(instanceId);
   }
 
-  // ✅ NOWA METODA - reset stanu entry
   async resetDownerBandState(instanceId) {
     return downerBandStateManager.forceCleanAllState(instanceId);
   }
 
-  async resetTrailingStopTracking(instanceId) {
-    return mutex.withLock(`trailing-${instanceId}`, async () => {
-      this.extremumReached.set(instanceId, false);
-      this.highestPrices.delete(instanceId);
-      this.trailingStopActivationTime.delete(instanceId);
-
+  async resetStopLossTracking(instanceId) {
+    return mutex.withLock(`stoploss-${instanceId}`, async () => {
       await upperBandStateManager.forceCleanAllState(instanceId);
-      // ✅ DODANE - reset stanu entry
       await downerBandStateManager.forceCleanAllState(instanceId);
-      TradingLogger.logUpperBandReset(instanceId, "Trailing stop reset");
+      TradingLogger.logDebugThrottled(
+        `stoploss-reset-${instanceId}`,
+        `[STOP LOSS] Reset completed | Instance: ${instanceId.slice(-8)}`,
+        120000
+      );
     });
   }
 
@@ -73,7 +64,7 @@ class AnalysisService extends EventEmitter {
       TradingLogger.logDebugThrottled(
         `kline-received-${instanceId}`,
         `[KLINE RECEIVED] Instance: ${instanceId} | Symbol: ${candle.symbol} | Price: ${candle.close} | High: ${candle.high}`,
-        60000 // raz na minutę
+        60000
       );
       const currentPrice = candle.close;
       const currentHigh = candle.high;
@@ -107,7 +98,6 @@ class AnalysisService extends EventEmitter {
         }
       }
 
-      this.updateHighestPrice(instanceId, currentHigh);
       this.detectSignals(instanceId, currentPrice, currentHigh, currentLow);
       this.lastPrices.set(instanceId, currentPrice);
     });
@@ -133,175 +123,152 @@ class AnalysisService extends EventEmitter {
         return;
       }
 
-      this.updateHighestPrice(instanceId, currentHigh);
       this.detectSignals(instanceId, currentPrice, currentHigh, currentLow);
       this.lastPrices.set(instanceId, currentPrice);
     });
   }
 
-  updateHighestPrice(instanceId, currentHigh) {
-    const config = this.instances.get(instanceId);
-    const trailingStopEnabled = config?.signals?.enableTrailingStop === true;
+  async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
+    // ✅ MUTEX LOCK dla thread safety
+    return mutex.withLock(`detect-signals-${instanceId}`, async () => {
+      try {
+        TradingLogger.logDebugThrottled(
+          `detect-signals-${instanceId}`,
+          `[DETECT SIGNALS] Instance: ${instanceId} | Price: ${currentPrice} | High: ${currentHigh} | Low: ${currentLow}`,
+          30000
+        );
 
-    if (
-      trailingStopEnabled &&
-      this.extremumReached.has(instanceId) &&
-      this.extremumReached.get(instanceId)
-    ) {
-      if (!this.highestPrices.has(instanceId)) {
-        this.highestPrices.set(instanceId, currentHigh);
-      } else if (currentHigh > this.highestPrices.get(instanceId)) {
-        this.highestPrices.set(instanceId, currentHigh);
+        const indicators = this.indicators.get(instanceId);
+        if (!indicators || !indicators.hurstResult) {
+          return;
+        }
+
+        const hurstResult = indicators.hurstResult;
+        const emaValue = indicators.emaValue;
+        const shortEmaValue = indicators.shortEmaValue;
+        const config = this.instances.get(instanceId);
+
+        const currentTrend = this.determineTrend(
+          currentPrice,
+          emaValue,
+          shortEmaValue
+        );
+
+        const getActivePositionFn = (id) => {
+          if (!this._injectedSignalService) return null;
+          return this._injectedSignalService.getActivePositions(id);
+        };
+
+        // SPRAWDZENIE SYGNAŁÓW WYJŚCIA (upper band)
+        const exitSignal = await upperBandStateManager.updateState(
+          instanceId,
+          currentPrice,
+          currentHigh,
+          currentLow,
+          hurstResult,
+          getActivePositionFn
+        );
+
+        if (exitSignal) {
+          this.emit("exitSignal", exitSignal);
+        }
+
+        // SPRAWDZENIE STOP LOSS (tylko po 3 wejściach)
+        const activePosition = getActivePositionFn(instanceId);
+        if (
+          activePosition &&
+          activePosition.entries &&
+          activePosition.entries.length === 3
+        ) {
+          const stopLossSignal = this.checkStopLoss(
+            instanceId,
+            currentPrice,
+            activePosition,
+            config
+          );
+          if (stopLossSignal) {
+            this.emit("exitSignal", stopLossSignal);
+          }
+        }
+
+        // SPRAWDZENIE SYGNAŁÓW WEJŚCIA
+        const entrySignal = await downerBandStateManager.updateState(
+          instanceId,
+          currentPrice,
+          currentHigh,
+          currentLow,
+          hurstResult,
+          emaValue,
+          shortEmaValue,
+          currentTrend,
+          config,
+          getActivePositionFn
+        );
+
+        if (entrySignal) {
+          this.emit("entrySignal", entrySignal);
+        }
+      } catch (error) {
+        logger.error(
+          `Błąd podczas wykrywania sygnałów dla instancji ${instanceId}: ${error.message}`
+        );
       }
-    }
+    });
   }
 
-  async detectSignals(instanceId, currentPrice, currentHigh, currentLow) {
-    try {
-      TradingLogger.logDebugThrottled(
-        `detect-signals-${instanceId}`,
-        `[DETECT SIGNALS] Instance: ${instanceId} | Price: ${currentPrice} | High: ${currentHigh} | Low: ${currentLow}`,
-        30000
-      );
-
-      const indicators = this.indicators.get(instanceId);
-      if (!indicators || !indicators.hurstResult) {
-        return;
-      }
-
-      const hurstResult = indicators.hurstResult;
-      const emaValue = indicators.emaValue;
-      const shortEmaValue = indicators.shortEmaValue;
-      const config = this.instances.get(instanceId);
-
-      TradingLogger.logDebugThrottled(
-        `detect-upperband-${instanceId}`,
-        `[DETECT UPPERBAND] UpperBand: ${hurstResult.upperBand} | TestTrigger (95%): ${hurstResult.upperBand * 0.95} | High: ${currentHigh} | Would trigger: ${currentHigh >= hurstResult.upperBand * 0.95}`,
-        30000
-      );
-
-      const currentTrend = this.determineTrend(
-        currentPrice,
-        emaValue,
-        shortEmaValue
-      );
-
-      const getActivePositionFn = (id) => {
-        if (!this._injectedSignalService) return null;
-        return this._injectedSignalService.getActivePositions(id);
-      };
-
-      // ✅ SPRAWDZENIE SYGNAŁÓW WYJŚCIA (bez zmian)
-      const exitSignal = await upperBandStateManager.updateState(
-        instanceId,
-        currentPrice,
-        currentHigh,
-        currentLow,
-        hurstResult,
-        getActivePositionFn
-      );
-
-      if (exitSignal) {
-        this.emit("exitSignal", exitSignal);
-      }
-
-      // ✅ NOWE - SPRAWDZENIE SYGNAŁÓW WEJŚCIA przez DownerBandStateManager
-      const entrySignal = await downerBandStateManager.updateState(
-        instanceId,
-        currentPrice,
-        currentHigh,
-        currentLow,
-        hurstResult,
-        emaValue,
-        shortEmaValue,
-        currentTrend,
-        config,
-        getActivePositionFn
-      );
-
-      if (entrySignal) {
-        this.emit("entrySignal", entrySignal);
-      }
-
-      // ❌ USUNIĘTA CAŁA STARA LOGIKA ENTRY - była tutaj logika touchesLowerBand
-
-      // ✅ TRAILING STOP (bez zmian)
-      const trailingStopEnabled = config?.signals?.enableTrailingStop === true;
-
-      if (trailingStopEnabled) {
-        const upperBandBreak = currentHigh >= hurstResult.upperBand;
-
-        if (upperBandBreak && !this.extremumReached.get(instanceId)) {
-          this.extremumReached.set(instanceId, true);
-          this.highestPrices.set(instanceId, currentHigh);
-          this.trailingStopActivationTime.set(instanceId, Date.now());
-
-          logger.debug(
-            `Osiągnięto górne ekstremum dla instancji ${instanceId}, aktywowano trailing stop (cena=${currentHigh})`
-          );
-        }
-
-        if (
-          this.extremumReached.get(instanceId) &&
-          this.highestPrices.has(instanceId)
-        ) {
-          const highestPrice = this.highestPrices.get(instanceId);
-          const activationTime =
-            this.trailingStopActivationTime.get(instanceId) || 0;
-
-          if (currentHigh > highestPrice) {
-            this.highestPrices.set(instanceId, currentHigh);
-          }
-
-          const trailingStopDelay =
-            config?.signals?.trailingStopDelay || 5 * 60 * 1000;
-          const timeElapsed = Date.now() - activationTime;
-
-          if (timeElapsed >= trailingStopDelay) {
-            let trailingStopPercent = config?.signals?.trailingStop || 0.02;
-
-            if (currentTrend === "strong_up") {
-              trailingStopPercent = trailingStopPercent * 1.5;
-            } else if (
-              currentTrend === "down" ||
-              currentTrend === "strong_down"
-            ) {
-              trailingStopPercent = trailingStopPercent * 0.7;
-            }
-
-            const dropFromHigh = (highestPrice - currentPrice) / highestPrice;
-
-            if (dropFromHigh >= trailingStopPercent) {
-              // ❌ USUNIĘTE lastSignalEmission - przeniesione do DownerBandStateManager
-              // Trailing stop używa bezpośredniego emit bez throttling
-              this.emit("exitSignal", {
-                instanceId,
-                type: "trailingStop",
-                price: currentPrice,
-                highestPrice,
-                dropPercent: dropFromHigh * 100,
-                trailingStopPercent: trailingStopPercent * 100,
-                hurstChannel: hurstResult,
-                emaValue,
-                timestamp: Date.now(),
-              });
-
-              TradingLogger.logDebugThrottled(
-                `signal-${instanceId}-trailing`,
-                `Emitowano sygnał trailingStop dla ${instanceId} @${currentPrice}`,
-                60000
-              );
-
-              await this.resetTrailingStopTracking(instanceId);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      logger.error(
-        `Błąd podczas wykrywania sygnałów dla instancji ${instanceId}: ${error.message}`
-      );
+  checkStopLoss(instanceId, currentPrice, activePosition, config) {
+    // Sprawdź czy stop loss jest włączony
+    const stopLossConfig = config?.stopLoss || config?.signals?.stopLoss;
+    if (!stopLossConfig || !stopLossConfig.enabled) {
+      return null;
     }
+
+    // Oblicz średnią ważoną cenę wejścia
+    const avgEntryPrice =
+      this.calculateWeightedAverageEntryPrice(activePosition);
+
+    // Sprawdź czy cena spadła o 1.5% od średniej
+    const stopLossPrice =
+      avgEntryPrice * (1 - (stopLossConfig.percent || 0.015));
+
+    if (currentPrice <= stopLossPrice) {
+      TradingLogger.logDebugThrottled(
+        `stoploss-trigger-${instanceId}`,
+        `[STOP LOSS] Triggered | Price: ${currentPrice} <= Stop: ${stopLossPrice.toFixed(2)} (avg: ${avgEntryPrice.toFixed(2)}) | Instance: ${instanceId.slice(-8)}`,
+        60000
+      );
+
+      return {
+        instanceId,
+        type: "stopLoss",
+        price: currentPrice,
+        hurstChannel: this.indicators.get(instanceId)?.hurstResult,
+        timestamp: Date.now(),
+        metadata: {
+          avgEntryPrice,
+          stopLossPrice,
+          dropPercent: (
+            ((avgEntryPrice - currentPrice) / avgEntryPrice) *
+            100
+          ).toFixed(2),
+          entriesCount: activePosition.entries.length,
+        },
+      };
+    }
+
+    return null;
+  }
+
+  calculateWeightedAverageEntryPrice(position) {
+    let totalAllocation = 0;
+    let weightedSum = 0;
+
+    for (const entry of position.entries) {
+      weightedSum += entry.price * entry.allocation;
+      totalAllocation += entry.allocation;
+    }
+
+    return totalAllocation > 0 ? weightedSum / totalAllocation : 0;
   }
 
   determineTrend(currentPrice, emaValue, shortEmaValue) {
@@ -337,7 +304,6 @@ class AnalysisService extends EventEmitter {
         return false;
       }
 
-      // ✅ DODANIE 1M już było - bez zmian
       const intervals = ["15m", "1h", "1m"];
       await binanceService.initializeInstanceData(
         config.symbol,
@@ -366,7 +332,6 @@ class AnalysisService extends EventEmitter {
 
       this.instances.set(instanceId, config);
       this.indicators.set(instanceId, { hurstChannel, ema, shortEma });
-      this.extremumReached.set(instanceId, false);
 
       this.updateInitialIndicators(instanceId);
 
@@ -393,7 +358,7 @@ class AnalysisService extends EventEmitter {
 
       const config = this.instances.get(instanceId);
 
-      const intervals = ["15m", "1h", "1m"]; // ✅ DODANE 1m
+      const intervals = ["15m", "1h", "1m"];
       intervals.forEach((interval) => {
         binanceService.unsubscribeFromKlines(
           config.symbol,
@@ -402,18 +367,12 @@ class AnalysisService extends EventEmitter {
         );
       });
 
-      // ❌ USUNIĘTE czyszczenie lastSignalEmission - przeniesione do DownerBandStateManager
-
       await upperBandStateManager.forceCleanAllState(instanceId);
-      // ✅ DODANE - czyszczenie stanu entry
       await downerBandStateManager.forceCleanAllState(instanceId);
 
       this.instances.delete(instanceId);
       this.indicators.delete(instanceId);
       this.lastPrices.delete(instanceId);
-      this.extremumReached.delete(instanceId);
-      this.highestPrices.delete(instanceId);
-      this.trailingStopActivationTime.delete(instanceId);
 
       logger.info(`Zatrzymano analizę dla instancji ${instanceId}`);
       return true;
@@ -515,7 +474,6 @@ class AnalysisService extends EventEmitter {
     const config = this.instances.get(instanceId);
     const indicators = this.indicators.get(instanceId);
     const upperBandState = upperBandStateManager.getState(instanceId);
-    // ✅ DODANE - stan entry
     const downerBandState = downerBandStateManager.getState(instanceId);
 
     return {
@@ -524,10 +482,8 @@ class AnalysisService extends EventEmitter {
       emaValue: indicators.emaValue || null,
       shortEmaValue: indicators.shortEmaValue || null,
       lastPrice: this.lastPrices.get(instanceId) || null,
-      isExtremumReached: this.extremumReached.get(instanceId) || false,
-      highestPrice: this.highestPrices.get(instanceId) || null,
       upperBandState: upperBandState || null,
-      downerBandState: downerBandState || null, // ✅ DODANE
+      downerBandState: downerBandState || null,
       timestamp: new Date().getTime(),
     };
   }

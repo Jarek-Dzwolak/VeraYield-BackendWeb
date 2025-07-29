@@ -1,63 +1,33 @@
-/**
- * Instance Configuration - konfiguracja instancji strategii
- *
- * Odpowiedzialny za:
- * - Przechowywanie domyślnych parametrów strategii
- * - Konfigurację limitów alokacji kapitału
- * - Konfigurację parametrów sygnałów
- */
-
 const config = {
-  // Domyślne parametry strategii Hursta
   hurst: {
-    // Liczba okresów do analizy
     periods: 30,
-    // Współczynnik odchylenia standardowego dla górnej bandy
     upperDeviationFactor: 1.6,
-    // Współczynnik odchylenia standardowego dla dolnej bandy
     lowerDeviationFactor: 1.8,
-    // Minimalna wartość wykładnika Hursta do uznania trendu
     minExponent: 0.55,
   },
 
-  // Domyślne parametry EMA
   ema: {
-    // Liczba okresów EMA
     periods: 30,
   },
 
-  // Domyślna konfiguracja sygnałów
   signals: {
-    // Minimalny odstęp czasowy pomiędzy wejściami (ms)
     minEntryTimeGap: 2 * 60 * 60 * 1000, // 2 godziny
-    // Czy sprawdzać trend EMA przed wejściem
     checkEMATrend: true,
-    // Wartość trailing stop (procent od maksimum)
-    trailingStop: 0.02, // 2%
-    // Czy włączyć trailing stop
-    enableTrailingStop: true,
-    // Opóźnienie aktywacji trailing stopu po przekroczeniu górnej bandy (ms)
-    trailingStopDelay: 5 * 60 * 1000, // 5 minut
-    // Minimalny czas trwania pierwszego wejścia (ms)
-    // Używane do uniknięcia fałszywych sygnałów w krótkim czasie
-    minFirstEntryDuration: 60 * 60 * 1000, // 1 godzina - minimalny czas trwania pierwszego wejścia
+    minFirstEntryDuration: 60 * 60 * 1000, // 1 godzina
+    stopLoss: {
+      enabled: true,
+      percent: 0.015, // 1.5%
+    },
   },
 
-  // Domyślna alokacja kapitału
   capitalAllocation: {
-    // Pierwsze wejście
     firstEntry: 0.1, // 10% kapitału
-    // Drugie wejście
     secondEntry: 0.25, // 25% kapitału
-    // Trzecie wejście
     thirdEntry: 0.5, // 50% kapitału
-    // Maksymalna liczba wejść
     maxEntries: 3,
   },
 
-  // Limity parametrów
   limits: {
-    // Limity dla parametrów kanału Hursta
     hurst: {
       periods: {
         min: 10,
@@ -72,24 +42,26 @@ const config = {
         max: 5.0,
       },
     },
-    // Limity dla parametrów EMA
     ema: {
       periods: {
         min: 5,
         max: 200,
       },
     },
-    // Limity dla minimalnego odstępu czasowego między wejściami
     minEntryTimeGap: {
       min: 5 * 60 * 1000, // 5 minut
       max: 24 * 60 * 60 * 1000, // 24 godziny
     },
-    // Limity dla minimalnego czasu trwania pierwszego wejścia
     minFirstEntryDuration: {
       min: 0, // 0 minut (wyłączone)
       max: 24 * 60 * 60 * 1000, // 24 godziny
     },
-    // Limity alokacji kapitału
+    stopLoss: {
+      percent: {
+        min: 0.005, // 0.5%
+        max: 0.05, // 5%
+      },
+    },
     capitalAllocation: {
       firstEntry: {
         min: 0.01, // 1%
@@ -106,20 +78,12 @@ const config = {
     },
   },
 
-  // Domyślne interwały używane w strategii
   intervals: {
-    // Interwał dla kanału Hursta
     hurst: "15m",
-    // Interwał dla EMA
     ema: "1h",
   },
 };
 
-/**
- * Waliduje parametry instancji
- * @param {Object} params - Parametry do walidacji
- * @returns {Object} - Wynik walidacji z ewentualnymi błędami
- */
 const validateInstanceParams = (params) => {
   const errors = [];
 
@@ -157,24 +121,6 @@ const validateInstanceParams = (params) => {
         );
       }
     }
-    // Walidacja trailing stopu
-    if (params.signals?.trailingStop !== undefined) {
-      if (
-        params.signals.trailingStop < 0.005 ||
-        params.signals.trailingStop > 0.1
-      ) {
-        errors.push("Wartość trailing stopu musi być w zakresie 0.5%-10%");
-      }
-    }
-
-    if (params.signals?.trailingStopDelay !== undefined) {
-      if (
-        params.signals.trailingStopDelay < 0 ||
-        params.signals.trailingStopDelay > 3600000
-      ) {
-        errors.push("Opóźnienie trailing stopu musi być w zakresie 0-60 minut");
-      }
-    }
   }
 
   // Walidacja parametrów EMA
@@ -187,7 +133,22 @@ const validateInstanceParams = (params) => {
     }
   }
 
-  // Walidacja minnimalnego czsu trwania pierwszego wejścia
+  // Walidacja stop loss
+  if (params.signals?.stopLoss) {
+    if (params.signals.stopLoss.percent !== undefined) {
+      const { min, max } = config.limits.stopLoss.percent;
+      if (
+        params.signals.stopLoss.percent < min ||
+        params.signals.stopLoss.percent > max
+      ) {
+        errors.push(
+          `Procent stop loss musi być z zakresu ${(min * 100).toFixed(1)}%-${(max * 100).toFixed(1)}%`
+        );
+      }
+    }
+  }
+
+  // Walidacja minimalnego czasu trwania pierwszego wejścia
   if (params.signals?.minFirstEntryDuration !== undefined) {
     if (
       params.signals.minFirstEntryDuration < 0 ||
@@ -198,6 +159,7 @@ const validateInstanceParams = (params) => {
       );
     }
   }
+
   // Walidacja minimalnego odstępu czasowego
   if (params.signals && params.signals.minEntryTimeGap !== undefined) {
     const { min, max } = config.limits.minEntryTimeGap;
@@ -256,10 +218,6 @@ const validateInstanceParams = (params) => {
   };
 };
 
-/**
- * Zwraca domyślne parametry instancji
- * @returns {Object} - Domyślne parametry
- */
 const getDefaultInstanceParams = () => {
   return {
     hurst: { ...config.hurst },

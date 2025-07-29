@@ -107,10 +107,11 @@ class InstanceService {
               signals: {
                 checkEMATrend: true,
                 minEntryTimeGap: 7200000,
-                enableTrailingStop: true,
-                trailingStop: 0.02,
-                trailingStopDelay: 300000,
                 minFirstEntryDuration: 3600000,
+                stopLoss: {
+                  enabled: true,
+                  percent: 0.015, // 1.5%
+                },
               },
               capitalAllocation: {
                 firstEntry: 0.1,

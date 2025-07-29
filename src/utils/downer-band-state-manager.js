@@ -1,6 +1,7 @@
 const mutex = require("./mutex");
 const TradingLogger = require("./trading-logger");
 const logger = require("./logger");
+const cooldownService = require("../services/cooldown.service");
 
 class DownerBandStateManager {
   constructor() {
@@ -183,7 +184,15 @@ class DownerBandStateManager {
 
         const state = this.downerBandStates.get(instanceId);
         const now = Date.now();
-
+        if (cooldownService.isInCooldown(instanceId)) {
+          const cooldownInfo = cooldownService.getCooldownInfo(instanceId);
+          TradingLogger.logDebugThrottled(
+            `entry-blocked-cooldown-${instanceId}`,
+            `[ENTRY BLOCKED] Cooldown active: ${cooldownInfo.remainingText} | Instance: ${instanceId.slice(-8)}`,
+            300000 // co 5 minut
+          );
+          return null;
+        }
         // ✅ GŁÓWNA LOGIKA - sprawdź warunki dla pierwszego wejścia
         return this.handleFirstEntry(
           instanceId,
@@ -311,7 +320,16 @@ class DownerBandStateManager {
   ) {
     const now = Date.now();
     const entryCount = activePosition.entries.length;
-
+    // Sprawdź cooldown przed procesowaniem dodatkowych wejść
+    if (cooldownService.isInCooldown(instanceId)) {
+      const cooldownInfo = cooldownService.getCooldownInfo(instanceId);
+      TradingLogger.logDebugThrottled(
+        `entry-blocked-cooldown-multiple-${instanceId}`,
+        `[MULTIPLE ENTRY BLOCKED] Cooldown active: ${cooldownInfo.remainingText} | Instance: ${instanceId.slice(-8)}`,
+        300000
+      );
+      return null;
+    }
     // ✅ SPRAWDŹ MAKSYMALNĄ LICZBĘ WEJŚĆ
     if (entryCount >= 3) {
       return null; // Maksymalnie 3 wejścia

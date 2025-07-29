@@ -15,6 +15,7 @@ const marketRoutes = require("./market.routes");
 const signalRoutes = require("./signal.routes");
 const instanceRoutes = require("./instance.routes");
 const simulatorRoutes = require("./simulator.routes"); // Tylko do testów
+const cooldownRoutes = require("./cooldown.routes");
 
 // ✅ NOWE - Import kontrolera danych frontendowych i middleware autentykacji
 const frontendDataController = require("../controllers/frontend-data.controller");
@@ -29,6 +30,7 @@ router.use(`${API_BASE}/market`, marketRoutes);
 router.use(`${API_BASE}/signals`, signalRoutes);
 router.use(`${API_BASE}/instances`, instanceRoutes);
 router.use(`${API_BASE}/simulator`, simulatorRoutes); // Tylko do testów
+router.use(`${API_BASE}/cooldown`, cooldownRoutes);
 
 // ✅ NOWE - Routing dla danych frontendowych z autentykacją
 router.get(
@@ -63,6 +65,7 @@ router.get(`${API_BASE}`, (req, res) => {
       signals: `${API_BASE}/signals`,
       instances: `${API_BASE}/instances`,
       frontendData: `${API_BASE}/frontend-data`, // ✅ NOWE
+      cooldown: `${API_BASE}/cooldown`,
     },
     webSocket: {
       url: `${wsProtocol}://${host}`,

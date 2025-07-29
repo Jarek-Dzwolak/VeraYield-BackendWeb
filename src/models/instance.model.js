@@ -1,8 +1,3 @@
-/**
- * Model instancji strategii
- * Przechowuje konfigurację instancji bota tradingowego
- */
-
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
@@ -29,7 +24,6 @@ const InstanceSchema = new Schema({
     type: Boolean,
     default: true,
   },
-  // Ujednolicona struktura strategii
   strategy: {
     type: {
       type: String,
@@ -37,7 +31,6 @@ const InstanceSchema = new Schema({
       default: "hurst",
     },
     parameters: {
-      // Parametry kanału Hursta
       hurst: {
         interval: {
           type: String,
@@ -72,7 +65,6 @@ const InstanceSchema = new Schema({
           default: 2.0,
         },
       },
-      // Parametry EMA
       ema: {
         interval: {
           type: String,
@@ -86,7 +78,6 @@ const InstanceSchema = new Schema({
           max: 200,
         },
       },
-      // Konfiguracja sygnałów
       signals: {
         checkEMATrend: {
           type: Boolean,
@@ -96,24 +87,23 @@ const InstanceSchema = new Schema({
           type: Number,
           default: 7200000, // 2h w milisekundach
         },
-        enableTrailingStop: {
-          type: Boolean,
-          default: true,
-        },
-        trailingStop: {
-          type: Number,
-          default: 0.02, // 2%
-        },
-        trailingStopDelay: {
-          type: Number,
-          default: 300000, // 5 minut w milisekundach
-        },
         minFirstEntryDuration: {
           type: Number,
           default: 3600000, // 1 godzina w milisekundach
         },
+        stopLoss: {
+          enabled: {
+            type: Boolean,
+            default: true,
+          },
+          percent: {
+            type: Number,
+            default: 0.015, // 1.5%
+            min: 0.005, // 0.5%
+            max: 0.05, // 5%
+          },
+        },
       },
-      // Alokacja kapitału
       capitalAllocation: {
         firstEntry: {
           type: Number,
@@ -137,7 +127,6 @@ const InstanceSchema = new Schema({
     },
   },
 
-  // Dane finansowe
   financials: {
     allocatedCapital: {
       type: Number,
@@ -167,7 +156,6 @@ const InstanceSchema = new Schema({
       type: Schema.Types.ObjectId,
       ref: "User",
     },
-    // Struktura openPositions - przechowuje aktywne pozycje
     openPositions: [
       {
         positionId: {
@@ -192,7 +180,6 @@ const InstanceSchema = new Schema({
         },
       },
     ],
-    // Struktura closedPositions - przechowuje zamknięte pozycje
     closedPositions: [
       {
         positionId: {
@@ -230,7 +217,7 @@ const InstanceSchema = new Schema({
       },
     ],
   },
-  // Statystyki
+
   stats: {
     totalSignals: {
       type: Number,
@@ -281,7 +268,7 @@ const InstanceSchema = new Schema({
       default: "isolated",
     },
   },
-  // ❌ DEPRECATED - zachowane dla kompatybilności z istniejącymi danymi
+
   bybitConfig: {
     apiKey: {
       type: String,
@@ -307,12 +294,10 @@ const InstanceSchema = new Schema({
   },
 });
 
-// Metoda do uzyskania identyfikatora
 InstanceSchema.methods.getInstanceId = function () {
   return this.instanceId;
 };
 
-// Pre-save hook do generowania instanceId i aktualizacji updatedAt
 InstanceSchema.pre("save", function (next) {
   if (!this.instanceId) {
     this.instanceId = this._id.toString();
@@ -321,11 +306,6 @@ InstanceSchema.pre("save", function (next) {
   next();
 });
 
-/**
- * Metoda - aktualizacja bilansu instancji
- * @param {Object} balanceUpdate - Dane do aktualizacji bilansu
- * @returns {Promise<void>}
- */
 InstanceSchema.methods.updateBalance = async function (balanceUpdate) {
   if (!this.financials) {
     this.financials = {

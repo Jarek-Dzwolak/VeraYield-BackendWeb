@@ -8,6 +8,7 @@ const Signal = require("../models/signal.model");
 const Instance = require("../models/instance.model");
 const instanceService = require("./instance.service");
 const downerBandStateManager = require("../utils/downer-band-state-manager");
+const cooldownService = require("./cooldown.service");
 
 class SignalService extends EventEmitter {
   constructor() {
@@ -726,7 +727,16 @@ class SignalService extends EventEmitter {
           );
 
           this.emit("positionClosed", currentPosition);
+          // Aktywuj cooldown jeśli to był stop loss
+          if (signalData.type === "stopLoss") {
+            await cooldownService.setCooldown(instanceId, 12); // 12 godzin cooldown
 
+            TradingLogger.logDebugThrottled(
+              `cooldown-activated-${instanceId}`,
+              `[COOLDOWN] Activated for 12h after stop loss | Instance: ${instanceId.slice(-8)}`,
+              300000
+            );
+          }
           const instanceForSync = await Instance.findOne({ instanceId });
           if (
             instanceForSync &&
