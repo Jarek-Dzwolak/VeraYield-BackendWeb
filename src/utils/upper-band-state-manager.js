@@ -192,7 +192,7 @@ class UpperBandStateManager {
 
         const upperBand = hurstResult.upperBand;
         const exitTrigger = upperBand * 1.0009;
-        const returnTrigger = upperBand * 0.999;
+        const returnTrigger = upperBand * 0.9995;
         const exitResetTrigger = upperBand * 0.999;
         const returnResetTrigger = upperBand * 1.0009;
 
