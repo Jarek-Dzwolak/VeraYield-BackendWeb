@@ -499,7 +499,7 @@ class SignalService extends EventEmitter {
         await analysisService.resetUpperBandState(instanceId);
         // ✅ DODANE - reset stanu entry
         await analysisService.resetDownerBandState(instanceId);
-        await analysisService.resetTrailingStopTracking(instanceId);
+        await analysisService.resetStopLossTracking(instanceId);
       } catch (error) {
         logger.error(`Error in atomic state reset: ${error.message}`);
       }
